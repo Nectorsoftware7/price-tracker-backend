@@ -53,6 +53,14 @@ async function fetchProduct(product) {
     }
     case "meesho":
     case "jiomart":
+    case "tira":
+    case "nykaa":
+    case "snapdeal":
+    case "purplle":
+      // No site-specific handling yet — relies on the generic JSON-LD /
+      // __NEXT_DATA__ / CSS-selector fallback chain in getPriceWithBrowser.
+      // If a site doesn't expose JSON-LD, priceSelector/stockSelector must be
+      // supplied per-product (same as any other custom site).
       return getPriceWithBrowser(product.url, priceSelector, stockSelector);
     default:
       throw new Error(`Unknown site type: ${product.site}`);

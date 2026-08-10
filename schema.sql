@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS products (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
-  site ENUM('shopify', 'woocommerce', 'flipkart', 'meesho', 'jiomart') NOT NULL,
+  site ENUM('shopify', 'woocommerce', 'flipkart', 'meesho', 'jiomart', 'tira', 'nykaa', 'snapdeal', 'purplle') NOT NULL,
   url VARCHAR(500) NOT NULL,
   price_selector VARCHAR(500),
   stock_selector VARCHAR(500),

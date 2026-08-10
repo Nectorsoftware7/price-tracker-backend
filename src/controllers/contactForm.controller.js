@@ -51,6 +51,7 @@ async function processSubmission({ formTitle, siteName, siteUrl, platform, field
             storeName: siteName,
             storeUrl: siteUrl,
             customerName: name,
+            platform,
           });
           emailSent = true;
         } catch (err) {
@@ -98,6 +99,7 @@ const manualReply = asyncHandler(async (req, res) => {
     storeName: submission.siteName,
     storeUrl: submission.siteUrl,
     customerName: submission.name,
+    platform: submission.platform,
   });
 
   const updated = await ContactSubmission.recordManualReply(req.params.id, message);

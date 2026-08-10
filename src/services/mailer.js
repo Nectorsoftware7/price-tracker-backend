@@ -61,11 +61,18 @@ function buildReplyEmailHtml({ storeName, storeUrl, customerName, replyText }) {
 </html>`;
 }
 
-async function sendReplyEmail({ to, subject, text, storeName, storeUrl, customerName }) {
-  // RESEND_FROM must be on a domain verified in the Resend dashboard to email real
-  // customers. Until a domain is verified, Resend only allows onboarding@resend.dev
-  // as the sender, and only delivers to the account's own registered email address.
-  const from = process.env.RESEND_FROM || "onboarding@resend.dev";
+// Each store replies from its own verified domain — Resend requires the sending
+// address to be on a domain verified in its dashboard, and different platforms
+// (Shopify vs WooCommerce) map to different real-world stores/domains here.
+const PLATFORM_FROM = {
+  shopify: process.env.RESEND_FROM_SHOPIFY,
+  woocommerce: process.env.RESEND_FROM_WOOCOMMERCE,
+};
+
+async function sendReplyEmail({ to, subject, text, storeName, storeUrl, customerName, platform }) {
+  // Falls back to the unverified Resend sandbox address (only deliverable to the
+  // account's own email) if no domain has been verified for this platform yet.
+  const from = PLATFORM_FROM[platform] || process.env.RESEND_FROM || "onboarding@resend.dev";
 
   const { error } = await getClient().emails.send({
     from: `${storeName || process.env.SMTP_FROM_NAME || "Support"} <${from}>`,

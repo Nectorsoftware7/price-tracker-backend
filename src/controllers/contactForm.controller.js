@@ -137,4 +137,21 @@ const shopifyProxy = asyncHandler(async (req, res) => {
   res.json({ ok: true, ...result });
 });
 
-module.exports = { listSubmissions, manualReply, wordpressWebhook, shopifyProxy };
+// Called directly from a <script> tag embedded in the Shopify theme (not via App
+// Proxy — no App Proxy was ever actually configured for this store). Protected by
+// the same shared-secret pattern as the WordPress webhook, since the request comes
+// straight from the customer's browser rather than through a Shopify-signed proxy.
+const shopifyDirect = asyncHandler(async (req, res) => {
+  const expectedSecret = process.env.CF7_WEBHOOK_SECRET;
+  if (expectedSecret && req.headers["x-form-secret"] !== expectedSecret) {
+    throw new ApiError(401, "Invalid or missing form secret");
+  }
+
+  const { formTitle, siteName, siteUrl, fields } = req.body;
+  if (!fields || typeof fields !== "object") throw new ApiError(400, "fields (object) is required");
+
+  const result = await processSubmission({ formTitle, siteName, siteUrl, platform: "shopify", fields });
+  res.json({ ok: true, ...result });
+});
+
+module.exports = { listSubmissions, manualReply, wordpressWebhook, shopifyProxy, shopifyDirect };

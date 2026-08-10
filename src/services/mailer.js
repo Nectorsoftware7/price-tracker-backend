@@ -5,10 +5,15 @@ let transporter;
 function getTransporter() {
   if (transporter) return transporter;
 
+  const port = Number(process.env.SMTP_PORT) || 465;
   transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST || "smtp.gmail.com",
-    port: Number(process.env.SMTP_PORT) || 465,
-    secure: true,
+    port,
+    // 465 is implicit TLS (secure: true); 587 is STARTTLS, which nodemailer handles
+    // automatically over a plain connection when secure is false. Hardcoding
+    // secure: true broke port 587 — some hosts (e.g. Render) block outbound 465.
+    secure: port === 465,
+    connectionTimeout: 10_000,
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASSWORD,

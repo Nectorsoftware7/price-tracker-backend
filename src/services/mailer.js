@@ -1,25 +1,12 @@
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 
-let transporter;
+let resendClient;
 
-function getTransporter() {
-  if (transporter) return transporter;
-
-  const port = Number(process.env.SMTP_PORT) || 465;
-  transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || "smtp.gmail.com",
-    port,
-    // 465 is implicit TLS (secure: true); 587 is STARTTLS, which nodemailer handles
-    // automatically over a plain connection when secure is false. Hardcoding
-    // secure: true broke port 587 — some hosts (e.g. Render) block outbound 465.
-    secure: port === 465,
-    connectionTimeout: 10_000,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASSWORD,
-    },
-  });
-  return transporter;
+function getClient() {
+  if (resendClient) return resendClient;
+  if (!process.env.RESEND_API_KEY) throw new Error("RESEND_API_KEY missing in .env");
+  resendClient = new Resend(process.env.RESEND_API_KEY);
+  return resendClient;
 }
 
 function escapeHtml(str) {
@@ -75,17 +62,20 @@ function buildReplyEmailHtml({ storeName, storeUrl, customerName, replyText }) {
 }
 
 async function sendReplyEmail({ to, subject, text, storeName, storeUrl, customerName }) {
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASSWORD) {
-    throw new Error("SMTP_USER / SMTP_PASSWORD missing in .env");
-  }
+  // RESEND_FROM must be on a domain verified in the Resend dashboard to email real
+  // customers. Until a domain is verified, Resend only allows onboarding@resend.dev
+  // as the sender, and only delivers to the account's own registered email address.
+  const from = process.env.RESEND_FROM || "onboarding@resend.dev";
 
-  await getTransporter().sendMail({
-    from: `"${storeName || process.env.SMTP_FROM_NAME || "Support"}" <${process.env.SMTP_USER}>`,
+  const { error } = await getClient().emails.send({
+    from: `${storeName || process.env.SMTP_FROM_NAME || "Support"} <${from}>`,
     to,
     subject,
     text,
     html: buildReplyEmailHtml({ storeName, storeUrl, customerName, replyText: text }),
   });
+
+  if (error) throw new Error(error.message || "Resend send failed");
 }
 
 module.exports = { sendReplyEmail };

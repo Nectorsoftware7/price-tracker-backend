@@ -20,6 +20,7 @@
     "mysql2": "^3.11.3",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.15",
-    "playwright": "^1.47.0"
+    "playwright": "^1.47.0",
+    "resend": "^6.18.1"
   }
 }

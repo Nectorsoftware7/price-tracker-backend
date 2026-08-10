@@ -9,7 +9,13 @@ async function handleWordPress() {
   const posts = await WpPost.findAll();
 
   for (const { siteUrl, postId, productName } of posts) {
-    const comments = await wordpress.fetchUnansweredComments(siteUrl, postId);
+    let comments;
+    try {
+      comments = await wordpress.fetchUnansweredComments(siteUrl, postId);
+    } catch (err) {
+      console.error(`Failed to fetch WP comments for post ${postId}:`, err.message);
+      continue;
+    }
 
     for (const comment of comments) {
       const externalId = `${postId}:${comment.id}`;
@@ -48,7 +54,13 @@ async function handleWordPress() {
 }
 
 async function handleShopify() {
-  const reviews = await judgeme.fetchUnansweredReviews();
+  let reviews;
+  try {
+    reviews = await judgeme.fetchUnansweredReviews();
+  } catch (err) {
+    console.error("Failed to fetch Judge.me reviews:", err.message);
+    return;
+  }
 
   for (const review of reviews) {
     const externalId = String(review.id);
@@ -88,8 +100,20 @@ async function handleShopify() {
 }
 
 async function runAutoReply() {
-  await handleWordPress();
-  await handleShopify();
+  // Each platform's failure (bad credentials, API down) shouldn't stop the other
+  // from running — this endpoint is hit by an external cron trigger, so one broken
+  // integration crashing the whole call would silently take auto-reply offline
+  // entirely instead of just for that platform.
+  try {
+    await handleWordPress();
+  } catch (err) {
+    console.error("WordPress auto-reply run failed:", err.message);
+  }
+  try {
+    await handleShopify();
+  } catch (err) {
+    console.error("Shopify auto-reply run failed:", err.message);
+  }
 }
 
 module.exports = { runAutoReply };

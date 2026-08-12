@@ -127,7 +127,19 @@ async function getPriceWithBrowser(url, priceSelector, stockSelector) {
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
     });
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+
+    // Purplle's CDN serves stale cached copies of the product page — debug logging
+    // showed two consecutive checks 18s apart return fully-rendered but contradictory
+    // stock status ("in stock" with Add to Cart present, then "out of stock", then back)
+    // with no timeout/block involved. Different requests were landing on different edge
+    // cache nodes, some stale. A cache-busting query param + no-cache headers force a
+    // fresh fetch from origin instead of a cached edge copy.
+    const isPurplle = url.includes("purplle.com");
+    if (isPurplle) {
+      await page.setExtraHTTPHeaders({ "Cache-Control": "no-cache", Pragma: "no-cache" });
+    }
+    const gotoUrl = isPurplle ? `${url}${url.includes("?") ? "&" : "?"}_cb=${Date.now()}` : url;
+    await page.goto(gotoUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 
     const jsonLd = await extractFromJsonLd(page);
     if (jsonLd) {

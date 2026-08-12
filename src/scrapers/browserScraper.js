@@ -90,7 +90,7 @@ async function checkPurplleOutOfStockOverride(page) {
   // waitUntil: "domcontentloaded" for speed) — poll briefly instead of checking once
   // immediately, but don't block long for the (common) in-stock case where it never appears.
   return page
-    .waitForFunction(() => /this product is out of stock/i.test(document.body.innerText || ""), { timeout: 5000 })
+    .waitForFunction(() => /this product is out of stock/i.test(document.body.innerText || ""), { timeout: 8000 })
     .then(() => true)
     .catch(() => false);
 }

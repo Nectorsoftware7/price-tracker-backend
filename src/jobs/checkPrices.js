@@ -13,9 +13,16 @@ const FLAGGED_STATUSES = ["out_of_stock", "low_stock"];
 // JioMart's JSON-LD leaves offers.price blank, so it always needs a CSS selector
 // fallback. Rather than making the user supply one, we ship known-good selectors for
 // JioMart's product page template so "just paste the URL" keeps working everywhere.
+//
+// The unscoped ".PriceContainer__currentPrice" class also matches every card in the
+// "similar products" carousel further down the page (20+ matches) — .first() usually
+// happens to land on the real price since it's earliest in DOM order, but that's not
+// guaranteed, and a wrong pick reads as a wild, bogus price swing (e.g. ₹99 -> ₹1949).
+// Scoping to .product-description__productInfoContent (the actual product info block,
+// which the carousel sits outside of) makes it unambiguous — always exactly 1 match.
 const SITE_DEFAULT_SELECTORS = {
   jiomart: {
-    priceSelector: ".PriceContainer__currentPrice",
+    priceSelector: ".product-description__productInfoContent .PriceContainer__currentPrice",
     stockSelector: ".product-description__addToCartButton",
   },
 };
@@ -94,7 +101,21 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
   // make a selector-based scraper pick up an unrelated price from elsewhere on the page
   // (e.g. a "similar products" section). Once a product is confirmed unavailable, its
   // price isn't trustworthy — keep the last known real price instead of a bogus one.
-  const newPrice = newStock === "out_of_stock" && oldPrice != null ? oldPrice : scrapedPrice;
+  let newPrice = newStock === "out_of_stock" && oldPrice != null ? oldPrice : scrapedPrice;
+
+  // Defense-in-depth against the same class of bug even on sites we haven't hit yet:
+  // an ambiguous CSS selector matching an unrelated element (recommendations, bundles)
+  // reads as a wild, implausible price jump. A genuine sale/price hike this large in a
+  // single hourly check is essentially never real — discard it and keep the last known
+  // good price rather than propagating a bogus reading into history/alerts.
+  const SUSPICIOUS_RATIO = 5;
+  if (oldPrice != null && oldPrice > 0 && newPrice !== oldPrice) {
+    const ratio = newPrice / oldPrice;
+    if (ratio > SUSPICIOUS_RATIO || ratio < 1 / SUSPICIOUS_RATIO) {
+      console.warn(`[${product.name}] Suspicious price reading ₹${scrapedPrice} vs last known ₹${oldPrice} (${ratio.toFixed(2)}x) — discarding, keeping old price.`);
+      newPrice = oldPrice;
+    }
+  }
 
   await PricePoint.create(product._id, newPrice);
 

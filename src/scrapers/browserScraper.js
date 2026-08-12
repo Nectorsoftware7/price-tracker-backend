@@ -160,7 +160,17 @@ async function getPriceWithBrowser(url, priceSelector, stockSelector) {
     const gotoUrl = isPurplle ? `${url}${url.includes("?") ? "&" : "?"}_cb=${Date.now()}` : url;
     await page.goto(gotoUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 
-    const jsonLd = await extractFromJsonLd(page);
+    let jsonLd = await extractFromJsonLd(page);
+    if (!jsonLd) {
+      // Render's network/CPU is measurably slower than a home connection — some sites
+      // (Snapdeal) inject their JSON-LD block client-side, after JS execution that
+      // hasn't finished yet at "domcontentloaded" on a cold/slow run. Confirmed via a
+      // live failure: "No JSON-LD ... found" on Render for a page that has it locally.
+      // Give the page a bit more time to settle and retry once before falling through
+      // to __NEXT_DATA__/CSS selectors.
+      await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+      jsonLd = await extractFromJsonLd(page);
+    }
     if (jsonLd) {
       let status = availabilityUrlToStatus(jsonLd.availability) || "unknown";
       let raw = jsonLd.availability;
@@ -199,7 +209,10 @@ async function getPriceWithBrowser(url, priceSelector, stockSelector) {
       throw new Error("No JSON-LD or __NEXT_DATA__ price data found on this page, and no priceSelector was configured as a fallback.");
     }
 
-    await page.waitForSelector(priceSelector, { timeout: 15000 });
+    // 15s was tuned against a home connection — a live Render failure showed JioMart's
+    // price selector still not visible after 15s on Render's slower network, even
+    // though the same page loads it well within that on a local run.
+    await page.waitForSelector(priceSelector, { timeout: 25000 });
     const priceText = await page.locator(priceSelector).first().innerText();
     const price = parseFloat(priceText.replace(/[^0-9.]/g, ""));
     if (isNaN(price)) throw new Error(`Could not parse price from "${priceText}"`);

@@ -212,10 +212,13 @@ async function checkOneProduct(product) {
 // this server's IP is blocked from (Meesho) are skipped here and rely on a local
 // worker to report results via POST /api/products/:id/report-check instead.
 //
-// No bulk "everything I checked" Telegram summary here on purpose — applyCheckResult
-// already sends a focused alert per product exactly when its price or stock actually
-// changes. A blanket hourly digest of every product regardless of change was noisy
-// and buried the alerts that matter.
+// A per-product "everything I checked" digest was deliberately removed earlier —
+// applyCheckResult already sends a focused alert per product exactly when its price
+// or stock actually changes, and a blanket listing of every product regardless of
+// change was noisy and buried the alerts that matter. But with Render's free tier
+// occasionally sleeping/missing a scheduled trigger, there was no way to tell from
+// Telegram alone whether the hourly run had actually happened — so this sends one
+// short confirmation line per run (not per product) instead.
 async function runPriceCheck({ skipSites = [] } = {}) {
   const products = (await Product.findActive()).filter((p) => !skipSites.includes(p.site));
   const results = [];
@@ -223,6 +226,16 @@ async function runPriceCheck({ skipSites = [] } = {}) {
     results.push(await checkOneProduct(product));
   }
   await syncGoogleSheets().catch((err) => console.error("Google Sheets sync failed:", err.message));
+
+  const checkedAt = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+  const failed = results.filter((r) => !r.ok);
+  const changed = results.filter((r) => r.ok && r.changed);
+  await sendTelegramMessage(
+    `⏰ Hourly check ran\n\n${results.length - failed.length}/${results.length} checked, ${changed.length} changed` +
+      (failed.length ? `, ${failed.length} failed (${failed.map((f) => f.name).join(", ")})` : "") +
+      `\n🕐 ${checkedAt}`
+  );
+
   return results;
 }
 

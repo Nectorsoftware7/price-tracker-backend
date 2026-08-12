@@ -120,8 +120,27 @@ async function checkPurplleOutOfStockOverride(page) {
   return { isOutOfStock: debug.hasOutOfStockText || (debug.hasNotifyMe && !debug.hasAddToCart), debug: { idleResult, ...debug } };
 }
 
+// Sites that treat our (Render datacenter) IP differently from a normal residential
+// visitor — either outright blocking it (Tira/Nykaa return 403 even to a plain curl,
+// Meesho similarly) or silently serving stale/cached content only to it (Purplle kept
+// returning an identical, hours-old "in stock" snapshot regardless of cache-busting
+// headers/query params — see checkPurplleOutOfStockOverride's debug logging). Routing
+// just these through a residential proxy (if configured) makes the request look like
+// an ordinary home visitor instead of reworking detection per-site.
+const PROXY_SITES = ["tira.co", "nykaa.com", "meesho.com", "purplle.com"];
+
+function getProxyConfig(url) {
+  if (!process.env.PROXY_SERVER) return undefined;
+  if (!PROXY_SITES.some((host) => url.includes(host))) return undefined;
+  return {
+    server: process.env.PROXY_SERVER,
+    username: process.env.PROXY_USERNAME,
+    password: process.env.PROXY_PASSWORD,
+  };
+}
+
 async function getPriceWithBrowser(url, priceSelector, stockSelector) {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, proxy: getProxyConfig(url) });
   try {
     const page = await browser.newPage({
       userAgent:

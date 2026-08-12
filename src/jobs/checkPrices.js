@@ -222,31 +222,24 @@ async function runPriceCheck({ skipSites = [] } = {}) {
   for (const product of products) {
     results.push(await checkOneProduct(product));
   }
-  await syncGoogleSheets(results).catch((err) => console.error("Google Sheets sync failed:", err.message));
+  await syncGoogleSheets().catch((err) => console.error("Google Sheets sync failed:", err.message));
   return results;
 }
 
-// Appends this run's readings to the Log tab (a running history), then rebuilds the
-// Flagged and Price Variation tabs from scratch to reflect current state — those two
-// are a snapshot, not a log, so they'd grow unbounded if appended to every hour.
-async function syncGoogleSheets(results) {
+// Rebuilds the Log, Flagged and Price Variation tabs from scratch every run to reflect
+// current state — none of these are an appended history, so they'd grow unbounded
+// otherwise. Log is just the plain list of currently-tracked products (id/name/site/
+// url); Flagged and Price Variation filter that same list down further.
+async function syncGoogleSheets() {
   if (!googleSheets.isConfigured()) return;
-
-  // Only log rows for products whose price or stock actually moved this run — an
-  // unconditional row per product every hour makes the Log tab grow unbounded with
-  // mostly-unchanged noise instead of being a useful change history.
-  const logTab = process.env.GOOGLE_SHEETS_LOG_TAB || "Log";
-  await googleSheets.ensureHeader(logTab, ["Timestamp", "Product ID", "Name", "Site", "Price", "Stock", "Quantity", "URL"]);
-
-  const timestamp = new Date().toISOString();
-  const logRows = results
-    .filter((r) => r.ok && r.changed)
-    .map((r) => [timestamp, r.id, r.name, r.site, r.price, r.stock, r.quantity ?? "", r.url]);
-  await googleSheets.appendRows(logTab, logRows);
 
   // Only currently-tracked (active) products — a product removed from tracking (or
   // toggled off) shouldn't linger in these snapshot tabs.
   const allProducts = (await Product.findAll()).filter((p) => p.active);
+
+  const logTab = process.env.GOOGLE_SHEETS_LOG_TAB || "Log";
+  const logRows = allProducts.map((p) => [p._id, p.name, p.site, p.url]);
+  await googleSheets.overwriteSheet(logTab, ["ID", "Product_Name", "Site_Name", "Product_Url"], logRows);
 
   const formatCheckedAt = (p) =>
     p.lastCheckedAt
@@ -279,11 +272,11 @@ async function syncGoogleSheets(results) {
 async function checkOneProductById(id) {
   const product = await Product.findById(id);
   if (!product) throw new Error("Product not found");
-  const result = await checkOneProduct(product);
+  await checkOneProduct(product);
   // A single manual "Check now" (including the automatic one right after adding a
   // product) previously never touched Sheets — only the bulk hourly/cron run did. A
   // newly-added product would then sit invisible in the Log until the next bulk run.
-  await syncGoogleSheets([result]).catch((err) => console.error("Google Sheets sync failed:", err.message));
+  await syncGoogleSheets().catch((err) => console.error("Google Sheets sync failed:", err.message));
   return Product.findById(id);
 }
 

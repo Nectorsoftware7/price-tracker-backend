@@ -200,7 +200,14 @@ async function getPriceWithBrowser(url, priceSelector, stockSelector) {
     // *how the HTML got into the page* differs for these sites.
     const useScraperApi = process.env.SCRAPERAPI_KEY && PROXY_SITES.some((host) => url.includes(host));
     if (useScraperApi) {
-      const apiUrl = `https://api.scraperapi.com/?api_key=${process.env.SCRAPERAPI_KEY}&url=${encodeURIComponent(url)}&render=true`;
+      // Snapdeal's CloudFront protection rejected a plain render=true request outright
+      // ("Protected domains may require adding premium=true") — the other sites in this
+      // heavier-protection bracket (Nykaa/Tira/Meesho, all previously seen returning a
+      // 403 rather than degraded/stale content like Purplle/JioMart did) get the same
+      // premium routing pre-emptively. JioMart/Purplle already succeeded on the cheaper
+      // plain render=true, so they're left off this list to not burn extra credits.
+      const needsPremium = ["snapdeal.com", "nykaa.com", "tira.co", "meesho.com"].some((host) => url.includes(host));
+      const apiUrl = `https://api.scraperapi.com/?api_key=${process.env.SCRAPERAPI_KEY}&url=${encodeURIComponent(url)}&render=true${needsPremium ? "&premium=true" : ""}`;
       const res = await fetch(apiUrl);
       if (!res.ok) throw new Error(`ScraperAPI request failed: ${res.status} ${res.statusText}`);
       const html = await res.text();

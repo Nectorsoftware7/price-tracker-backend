@@ -85,14 +85,18 @@ async function extractFromNextData(page) {
 // for a listing whose live page clearly showed "This product is out of stock" with a
 // "Notify me when in stock" form. The rendered page text is the ground truth here, so
 // this overrides whatever JSON-LD/__NEXT_DATA__ claimed when it's present.
+//
+// This banner renders client-side, well after "domcontentloaded" (the event we
+// navigate on, for speed on every other site). A short waitForFunction poll here was
+// a race: on a slower render (busier network, cold Render instance, etc.) it would
+// time out before the banner ever appeared, silently falling back to JSON-LD's wrong
+// "InStock" — producing exactly the false "back in stock" alerts this was meant to
+// prevent. Waiting for the network to actually go idle first is a real completion
+// signal instead of a guessed timeout, so the check only runs once the client-side
+// render has had a genuine chance to finish.
 async function checkPurplleOutOfStockOverride(page) {
-  // The banner renders client-side after the initial DOM load (we navigate with
-  // waitUntil: "domcontentloaded" for speed) — poll briefly instead of checking once
-  // immediately, but don't block long for the (common) in-stock case where it never appears.
-  return page
-    .waitForFunction(() => /this product is out of stock/i.test(document.body.innerText || ""), { timeout: 8000 })
-    .then(() => true)
-    .catch(() => false);
+  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+  return page.evaluate(() => /this product is out of stock/i.test(document.body.innerText || ""));
 }
 
 async function getPriceWithBrowser(url, priceSelector, stockSelector) {

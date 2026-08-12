@@ -168,13 +168,18 @@ async function checkOneProduct(product) {
     }
     const { newPrice, priceChanged, stockChanged } = await applyCheckResult(product, result);
     return {
+      id: product._id,
       name: product.name,
       site: product.site,
       price: newPrice,
       stock: result.stock,
       quantity: result.stockDetail?.quantity ?? null,
       url: product.url,
-      changed: priceChanged || stockChanged,
+      // A brand-new product has no prior reading to compare against (priceChanged/
+      // stockChanged are both false on its very first check) — treat that first
+      // check as "changed" too, so newly-added products show up in the Log
+      // immediately instead of waiting for their first real price/stock move.
+      changed: priceChanged || stockChanged || product.lastCheckedAt == null,
       ok: true,
     };
   } catch (err) {
@@ -210,11 +215,14 @@ async function syncGoogleSheets(results) {
   // Only log rows for products whose price or stock actually moved this run — an
   // unconditional row per product every hour makes the Log tab grow unbounded with
   // mostly-unchanged noise instead of being a useful change history.
+  const logTab = process.env.GOOGLE_SHEETS_LOG_TAB || "Log";
+  await googleSheets.ensureHeader(logTab, ["Timestamp", "Product ID", "Name", "Site", "Price", "Stock", "Quantity", "URL"]);
+
   const timestamp = new Date().toISOString();
   const logRows = results
     .filter((r) => r.ok && r.changed)
-    .map((r) => [timestamp, r.name, r.site, r.price, r.stock, r.quantity ?? "", r.url]);
-  await googleSheets.appendRows(process.env.GOOGLE_SHEETS_LOG_TAB || "Log", logRows);
+    .map((r) => [timestamp, r.id, r.name, r.site, r.price, r.stock, r.quantity ?? "", r.url]);
+  await googleSheets.appendRows(logTab, logRows);
 
   // Only currently-tracked (active) products — a product removed from tracking (or
   // toggled off) shouldn't linger in these snapshot tabs.
@@ -251,7 +259,11 @@ async function syncGoogleSheets(results) {
 async function checkOneProductById(id) {
   const product = await Product.findById(id);
   if (!product) throw new Error("Product not found");
-  await checkOneProduct(product);
+  const result = await checkOneProduct(product);
+  // A single manual "Check now" (including the automatic one right after adding a
+  // product) previously never touched Sheets — only the bulk hourly/cron run did. A
+  // newly-added product would then sit invisible in the Log until the next bulk run.
+  await syncGoogleSheets([result]).catch((err) => console.error("Google Sheets sync failed:", err.message));
   return Product.findById(id);
 }
 

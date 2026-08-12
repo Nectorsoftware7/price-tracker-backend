@@ -27,6 +27,28 @@ function isConfigured() {
   return Boolean(process.env.GOOGLE_SHEET_ID);
 }
 
+// Unlike Flagged/Price Variation (rewritten fresh every run via overwriteSheet, header
+// included), the Log tab is append-only — nothing ever re-asserts its header row. If
+// row 1 is empty or doesn't match, write it once so a fresh/cleared sheet is always
+// self-labeling instead of silently accumulating unlabeled columns.
+async function ensureHeader(tabName, headerRow) {
+  if (!isConfigured()) return;
+  const sheets = getClient();
+  const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+
+  const res = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${tabName}!A1:Z1` });
+  const currentHeader = res.data.values?.[0] || [];
+  const matches = headerRow.length === currentHeader.length && headerRow.every((h, i) => h === currentHeader[i]);
+  if (matches) return;
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${tabName}!A1`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [headerRow] },
+  });
+}
+
 async function appendRows(tabName, rows) {
   if (!isConfigured() || rows.length === 0) return;
   const sheets = getClient();
@@ -55,4 +77,4 @@ async function overwriteSheet(tabName, headerRow, rows) {
   });
 }
 
-module.exports = { isConfigured, appendRows, overwriteSheet };
+module.exports = { isConfigured, appendRows, overwriteSheet, ensureHeader };

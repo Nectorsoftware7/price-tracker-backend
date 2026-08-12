@@ -81,6 +81,20 @@ async function extractFromNextData(page) {
   });
 }
 
+// Purplle's JSON-LD `offers.availability` is unreliable — it kept reporting InStock
+// for a listing whose live page clearly showed "This product is out of stock" with a
+// "Notify me when in stock" form. The rendered page text is the ground truth here, so
+// this overrides whatever JSON-LD/__NEXT_DATA__ claimed when it's present.
+async function checkPurplleOutOfStockOverride(page) {
+  // The banner renders client-side after the initial DOM load (we navigate with
+  // waitUntil: "domcontentloaded" for speed) — poll briefly instead of checking once
+  // immediately, but don't block long for the (common) in-stock case where it never appears.
+  return page
+    .waitForFunction(() => /this product is out of stock/i.test(document.body.innerText || ""), { timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+}
+
 async function getPriceWithBrowser(url, priceSelector, stockSelector) {
   const browser = await chromium.launch({ headless: true });
   try {
@@ -92,11 +106,16 @@ async function getPriceWithBrowser(url, priceSelector, stockSelector) {
 
     const jsonLd = await extractFromJsonLd(page);
     if (jsonLd) {
-      const status = availabilityUrlToStatus(jsonLd.availability);
+      let status = availabilityUrlToStatus(jsonLd.availability) || "unknown";
+      let raw = jsonLd.availability;
+      if (url.includes("purplle.com") && (await checkPurplleOutOfStockOverride(page))) {
+        status = "out_of_stock";
+        raw = "Page text: This product is out of stock";
+      }
       return {
         price: parseFloat(jsonLd.price),
-        stock: status || "unknown",
-        stockDetail: { status: status || "unknown", raw: jsonLd.availability, quantity: null },
+        stock: status,
+        stockDetail: { status, raw, quantity: null },
         source: "json-ld",
       };
     }

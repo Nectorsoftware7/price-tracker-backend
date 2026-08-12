@@ -103,17 +103,18 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
   // price isn't trustworthy — keep the last known real price instead of a bogus one.
   let newPrice = newStock === "out_of_stock" && oldPrice != null ? oldPrice : scrapedPrice;
 
-  // Defense-in-depth against the same class of bug even on sites we haven't hit yet:
-  // an ambiguous CSS selector matching an unrelated element (recommendations, bundles)
-  // reads as a wild, implausible price jump. A genuine sale/price hike this large in a
-  // single hourly check is essentially never real — discard it and keep the last known
-  // good price rather than propagating a bogus reading into history/alerts.
+  // Advisory-only flag for the same class of bug on sites we haven't hit yet (an
+  // ambiguous CSS selector matching an unrelated element). This intentionally does NOT
+  // discard/revert the reading — an earlier version did, and a single bad price (from
+  // whatever cause) permanently "poisoned" the reference point: every subsequent
+  // *correct* reading then looked equally implausible relative to that bad value and
+  // got silently reverted forever, locking the product onto the wrong price with no
+  // way to recover except a manual DB fix. Just log it for visibility instead.
   const SUSPICIOUS_RATIO = 5;
   if (oldPrice != null && oldPrice > 0 && newPrice !== oldPrice) {
     const ratio = newPrice / oldPrice;
     if (ratio > SUSPICIOUS_RATIO || ratio < 1 / SUSPICIOUS_RATIO) {
-      console.warn(`[${product.name}] Suspicious price reading ₹${scrapedPrice} vs last known ₹${oldPrice} (${ratio.toFixed(2)}x) — discarding, keeping old price.`);
-      newPrice = oldPrice;
+      console.warn(`[${product.name}] Suspicious price reading ₹${newPrice} vs last known ₹${oldPrice} (${ratio.toFixed(2)}x) — recording it anyway, but worth a manual look.`);
     }
   }
 

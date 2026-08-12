@@ -272,7 +272,19 @@ async function syncGoogleSheets() {
 async function checkOneProductById(id) {
   const product = await Product.findById(id);
   if (!product) throw new Error("Product not found");
-  await checkOneProduct(product);
+  const result = await checkOneProduct(product);
+
+  // A real price/stock change already gets its own detailed alert from
+  // applyCheckResult. A manual "Check now" click is a deliberate verification action
+  // though — send a confirmation for the "nothing changed" case too, so clicking it
+  // always gives visible feedback on Telegram instead of silence.
+  if (result.ok && !result.changed) {
+    const checkedAt = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+    await sendTelegramMessage(
+      `🔍 Manual check — no change\n\n<b>${result.name}</b>\nPrice: ₹${result.price}\nStock: ${result.stock}\n🕐 ${checkedAt}`
+    );
+  }
+
   // A single manual "Check now" (including the automatic one right after adding a
   // product) previously never touched Sheets — only the bulk hourly/cron run did. A
   // newly-added product would then sit invisible in the Log until the next bulk run.

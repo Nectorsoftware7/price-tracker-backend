@@ -95,8 +95,29 @@ async function extractFromNextData(page) {
 // signal instead of a guessed timeout, so the check only runs once the client-side
 // render has had a genuine chance to finish.
 async function checkPurplleOutOfStockOverride(page) {
-  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
-  return page.evaluate(() => /this product is out of stock/i.test(document.body.innerText || ""));
+  const idleResult = await page
+    .waitForLoadState("networkidle", { timeout: 15000 })
+    .then(() => "idle")
+    .catch(() => "timeout");
+
+  // Debug: capture what the page actually looked like on this run (site/IP-dependent
+  // behavior is suspected — Render's requests may be getting a different response than
+  // local ones) so it's visible directly in the API/Telegram output instead of needing
+  // Render's own logs.
+  const debug = await page.evaluate(() => {
+    const text = document.body.innerText || "";
+    return {
+      textLength: text.length,
+      hasOutOfStockText: /this product is out of stock/i.test(text),
+      hasNotifyMe: /notify me/i.test(text),
+      hasAddToCart: /add to cart|add to bag/i.test(text),
+      snippet: text.slice(0, 300).replace(/\s+/g, " "),
+    };
+  });
+
+  console.log(`[purplle-debug] networkidle=${idleResult} textLength=${debug.textLength} outOfStock=${debug.hasOutOfStockText} notifyMe=${debug.hasNotifyMe} addToCart=${debug.hasAddToCart} snippet="${debug.snippet}"`);
+
+  return { isOutOfStock: debug.hasOutOfStockText || (debug.hasNotifyMe && !debug.hasAddToCart), debug: { idleResult, ...debug } };
 }
 
 async function getPriceWithBrowser(url, priceSelector, stockSelector) {
@@ -112,9 +133,16 @@ async function getPriceWithBrowser(url, priceSelector, stockSelector) {
     if (jsonLd) {
       let status = availabilityUrlToStatus(jsonLd.availability) || "unknown";
       let raw = jsonLd.availability;
-      if (url.includes("purplle.com") && (await checkPurplleOutOfStockOverride(page))) {
-        status = "out_of_stock";
-        raw = "Page text: This product is out of stock";
+      if (url.includes("purplle.com")) {
+        const override = await checkPurplleOutOfStockOverride(page);
+        if (override.isOutOfStock) {
+          status = "out_of_stock";
+          raw = "Page text: This product is out of stock";
+        } else {
+          // Keep the debug snapshot even when we didn't override, so a wrong
+          // "in_stock" reading is diagnosable from the API/DB response itself.
+          raw = `${jsonLd.availability} | debug: ${JSON.stringify(override.debug)}`;
+        }
       }
       return {
         price: parseFloat(jsonLd.price),

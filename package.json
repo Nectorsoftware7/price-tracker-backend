@@ -21,6 +21,8 @@
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.15",
     "playwright": "^1.47.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "resend": "^6.18.1"
   }
 }

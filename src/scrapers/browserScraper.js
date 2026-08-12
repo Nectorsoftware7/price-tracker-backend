@@ -1,5 +1,16 @@
-const { chromium } = require("playwright");
+const { chromium } = require("playwright-extra");
+const stealthPlugin = require("puppeteer-extra-plugin-stealth")();
 const { classifyStockText } = require("./stockClassifier");
+
+// Plain Playwright is trivially fingerprintable as a bot regardless of IP reputation —
+// navigator.webdriver=true, missing plugins/mimeTypes, headless-specific canvas/WebGL
+// rendering, etc. are all checks anti-bot systems run independently of where the
+// request's IP is from. The stealth plugin patches these signals to look like a normal
+// Chrome install. This doesn't replace the residential-proxy fix for sites that block
+// on IP reputation alone (Tira/Nykaa/Snapdeal's outright 403s look IP-based), but it's
+// a prerequisite for telling IP-based blocking apart from fingerprint-based blocking,
+// and may fix or reduce blocking on its own for some sites even without a proxy.
+chromium.use(stealthPlugin);
 
 // schema.org Availability URL -> our internal status
 const AVAILABILITY_MAP = {

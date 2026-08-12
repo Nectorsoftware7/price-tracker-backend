@@ -162,10 +162,30 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
 
 async function checkOneProduct(product) {
   try {
-    const result = await fetchProduct(product);
+    let result = await fetchProduct(product);
     if (typeof result.price !== "number" || isNaN(result.price)) {
       throw new Error(`Scraper returned an invalid price: ${result.price}`);
     }
+
+    // Purplle intermittently serves a frozen, byte-identical cached snapshot of the
+    // product page even while the live site is clearly out of stock (confirmed via
+    // debug logging — a cache-busting query param on the request didn't fix it, since
+    // the staleness is server-side, not a CDN edge cache we can bypass client-side).
+    // The bad signal only runs one direction (stale cache -> looks in_stock), so only
+    // that transition needs a second, independent fetch to confirm before we believe
+    // a restock and fire a "BACK IN STOCK" alert.
+    if (product.site === "purplle" && product.lastStock === "out_of_stock" && result.stock === "in_stock") {
+      const confirm = await fetchProduct(product);
+      if (confirm.stock !== "in_stock") {
+        console.warn(`[${product.name}] Purplle in_stock reading not confirmed on retry (retry got ${confirm.stock}) — keeping out_of_stock.`);
+        result = {
+          ...result,
+          stock: "out_of_stock",
+          stockDetail: { ...result.stockDetail, raw: `Unconfirmed in_stock reading (retry got ${confirm.stock}) — keeping out_of_stock` },
+        };
+      }
+    }
+
     const { newPrice, priceChanged, stockChanged } = await applyCheckResult(product, result);
     return {
       id: product._id,

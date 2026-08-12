@@ -127,7 +127,7 @@ async function checkPurplleOutOfStockOverride(page) {
 // headers/query params — see checkPurplleOutOfStockOverride's debug logging). Routing
 // just these through a residential proxy (if configured) makes the request look like
 // an ordinary home visitor instead of reworking detection per-site.
-const PROXY_SITES = ["tira.co", "nykaa.com", "meesho.com", "purplle.com"];
+const PROXY_SITES = ["tira.co", "nykaa.com", "meesho.com", "purplle.com", "snapdeal.com"];
 
 function getProxyConfig(url) {
   if (!process.env.PROXY_SERVER) return undefined;
@@ -157,6 +157,26 @@ async function getPriceWithBrowser(url, priceSelector, stockSelector) {
     if (isPurplle) {
       await page.setExtraHTTPHeaders({ "Cache-Control": "no-cache", Pragma: "no-cache" });
     }
+
+    // JioMart gates the whole price/availability section behind a location prompt
+    // ("Enable location Services / Enter pin code...") for any visitor without a
+    // delivery location already picked — confirmed via debug logging: Render's fresh,
+    // cookie-less session got stuck on that prompt while a session with a location
+    // cookie set (e.g. a real browser that already picked one) sees the price
+    // normally. Pre-seeding the same cookie the site sets after a manual pincode
+    // pick (a fixed Mumbai 400001 — good enough since we only need *a* price, not a
+    // hyper-local one) skips the prompt entirely.
+    if (url.includes("jiomart.com")) {
+      await page.context().addCookies([
+        {
+          name: "app_location_details",
+          value: JSON.stringify({ country: "INDIA", country_iso_code: "IN", city: "MUMBAI", pincode: "400001", state: "MAHARASHTRA" }),
+          domain: ".jiomart.com",
+          path: "/",
+        },
+      ]);
+    }
+
     const gotoUrl = isPurplle ? `${url}${url.includes("?") ? "&" : "?"}_cb=${Date.now()}` : url;
     await page.goto(gotoUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
 

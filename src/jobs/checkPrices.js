@@ -10,8 +10,6 @@ const googleSheets = require("../services/googleSheets");
 
 const FLAGGED_STATUSES = ["out_of_stock", "low_stock"];
 
-const STOCK_EMOJI = { in_stock: "🟢", low_stock: "🟠", out_of_stock: "🔴", unknown: "⚪" };
-
 // JioMart's JSON-LD leaves offers.price blank, so it always needs a CSS selector
 // fallback. Rather than making the user supply one, we ship known-good selectors for
 // JioMart's product page template so "just paste the URL" keeps working everywhere.
@@ -132,7 +130,10 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
 
   await Product.recordCheckResult(product._id, { price: newPrice, stock: newStock, stockQuantity: newQuantity });
   console.log(`[${product.name}] price: ${newPrice}, stock: ${newStock}${newQuantity != null ? ` (${newQuantity} units)` : ""}`);
-  return newPrice;
+
+  const priceChanged = oldPrice != null && newPrice !== oldPrice;
+  const stockChanged = Boolean(newStock && newStock !== oldStock) || quantityChanged;
+  return { newPrice, priceChanged, stockChanged };
 }
 
 async function checkOneProduct(product) {
@@ -141,14 +142,15 @@ async function checkOneProduct(product) {
     if (typeof result.price !== "number" || isNaN(result.price)) {
       throw new Error(`Scraper returned an invalid price: ${result.price}`);
     }
-    const recordedPrice = await applyCheckResult(product, result);
+    const { newPrice, priceChanged, stockChanged } = await applyCheckResult(product, result);
     return {
       name: product.name,
       site: product.site,
-      price: recordedPrice,
+      price: newPrice,
       stock: result.stock,
       quantity: result.stockDetail?.quantity ?? null,
       url: product.url,
+      changed: priceChanged || stockChanged,
       ok: true,
     };
   } catch (err) {
@@ -157,26 +159,19 @@ async function checkOneProduct(product) {
   }
 }
 
-function buildSummaryMessage(results) {
-  const lines = results.map((r) => {
-    if (!r.ok) return `⚠️ <b>${r.name}</b> — check failed (${r.error})`;
-    const emoji = STOCK_EMOJI[r.stock] || "⚪";
-    return `${emoji} <b>${r.name}</b> — ₹${r.price}`;
-  });
-  return `🕐 Hourly price check\n\n${lines.join("\n")}`;
-}
-
 // Cloud-side products (Shopify, WooCommerce, Flipkart) are scraped directly. Sites
 // this server's IP is blocked from (Meesho) are skipped here and rely on a local
 // worker to report results via POST /api/products/:id/report-check instead.
+//
+// No bulk "everything I checked" Telegram summary here on purpose — applyCheckResult
+// already sends a focused alert per product exactly when its price or stock actually
+// changes. A blanket hourly digest of every product regardless of change was noisy
+// and buried the alerts that matter.
 async function runPriceCheck({ skipSites = [] } = {}) {
   const products = (await Product.findActive()).filter((p) => !skipSites.includes(p.site));
   const results = [];
   for (const product of products) {
     results.push(await checkOneProduct(product));
-  }
-  if (results.length > 0) {
-    await sendTelegramMessage(buildSummaryMessage(results));
   }
   await syncGoogleSheets(results).catch((err) => console.error("Google Sheets sync failed:", err.message));
   return results;
@@ -188,8 +183,13 @@ async function runPriceCheck({ skipSites = [] } = {}) {
 async function syncGoogleSheets(results) {
   if (!googleSheets.isConfigured()) return;
 
+  // Only log rows for products whose price or stock actually moved this run — an
+  // unconditional row per product every hour makes the Log tab grow unbounded with
+  // mostly-unchanged noise instead of being a useful change history.
   const timestamp = new Date().toISOString();
-  const logRows = results.filter((r) => r.ok).map((r) => [timestamp, r.name, r.site, r.price, r.stock, r.quantity ?? "", r.url]);
+  const logRows = results
+    .filter((r) => r.ok && r.changed)
+    .map((r) => [timestamp, r.name, r.site, r.price, r.stock, r.quantity ?? "", r.url]);
   await googleSheets.appendRows(process.env.GOOGLE_SHEETS_LOG_TAB || "Log", logRows);
 
   const allProducts = await Product.findAll();

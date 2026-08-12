@@ -192,8 +192,23 @@ async function getPriceWithBrowser(url, priceSelector, stockSelector) {
       ]);
     }
 
-    const gotoUrl = isPurplle ? `${url}${url.includes("?") ? "&" : "?"}_cb=${Date.now()}` : url;
-    await page.goto(gotoUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+    // ScraperAPI (or a similar "unlocker" service) fetches the page from its own pool of
+    // rotating/residential IPs and does the bot-detection dodging on its side — we get
+    // back plain rendered HTML instead of navigating there ourselves. Loading that HTML
+    // into the page via setContent (instead of goto) means every extraction function
+    // below (JSON-LD, __NEXT_DATA__, CSS selector) works completely unchanged — only
+    // *how the HTML got into the page* differs for these sites.
+    const useScraperApi = process.env.SCRAPERAPI_KEY && PROXY_SITES.some((host) => url.includes(host));
+    if (useScraperApi) {
+      const apiUrl = `https://api.scraperapi.com/?api_key=${process.env.SCRAPERAPI_KEY}&url=${encodeURIComponent(url)}&render=true`;
+      const res = await fetch(apiUrl);
+      if (!res.ok) throw new Error(`ScraperAPI request failed: ${res.status} ${res.statusText}`);
+      const html = await res.text();
+      await page.setContent(html, { waitUntil: "domcontentloaded" });
+    } else {
+      const gotoUrl = isPurplle ? `${url}${url.includes("?") ? "&" : "?"}_cb=${Date.now()}` : url;
+      await page.goto(gotoUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+    }
 
     let jsonLd = await extractFromJsonLd(page);
     if (!jsonLd) {

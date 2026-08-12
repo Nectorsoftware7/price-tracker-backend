@@ -98,13 +98,15 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
 
   await PricePoint.create(product._id, newPrice);
 
+  const checkedAt = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+
   if (oldPrice != null && newPrice !== oldPrice) {
     const direction = newPrice > oldPrice ? "📈 Price increased" : "📉 Price decreased";
     const stats = await getStats24h(product._id);
     await sendTelegramMessage(
       `${direction}\n\n<b>${product.name}</b>\nOld price: ₹${oldPrice}\nNew price: ₹${newPrice}\n` +
         (stats ? `Last 24h — min: ₹${stats.min}, max: ₹${stats.max}, avg: ₹${stats.avg}\n` : "") +
-        product.url
+        `${product.url}\n🕐 ${checkedAt}`
     );
   }
 
@@ -122,9 +124,9 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
   if (newStock && newStock !== oldStock) {
     if (newStock === "out_of_stock" || newStock === "low_stock") {
       const label = newStock === "out_of_stock" ? "🔴 OUT OF STOCK" : "🟠 LOW STOCK";
-      await sendTelegramMessage(`${label}\n\n<b>${product.name}</b>\n${product.url}`);
+      await sendTelegramMessage(`${label}\n\n<b>${product.name}</b>\n${product.url}\n🕐 ${checkedAt}`);
     } else if (newStock === "in_stock" && oldStock === "out_of_stock") {
-      await sendTelegramMessage(`🟢 BACK IN STOCK\n\n<b>${product.name}</b>\n${product.url}`);
+      await sendTelegramMessage(`🟢 BACK IN STOCK\n\n<b>${product.name}</b>\n${product.url}\n🕐 ${checkedAt}`);
     }
   }
 
@@ -192,14 +194,21 @@ async function syncGoogleSheets(results) {
     .map((r) => [timestamp, r.name, r.site, r.price, r.stock, r.quantity ?? "", r.url]);
   await googleSheets.appendRows(process.env.GOOGLE_SHEETS_LOG_TAB || "Log", logRows);
 
-  const allProducts = await Product.findAll();
+  // Only currently-tracked (active) products — a product removed from tracking (or
+  // toggled off) shouldn't linger in these snapshot tabs.
+  const allProducts = (await Product.findAll()).filter((p) => p.active);
+
+  const formatCheckedAt = (p) =>
+    p.lastCheckedAt
+      ? new Date(p.lastCheckedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })
+      : "";
 
   const flaggedRows = allProducts
     .filter((p) => FLAGGED_STATUSES.includes(p.lastStock))
-    .map((p) => [p.name, p.site, p.lastPrice ?? "", p.lastStock, p.lastStockQuantity ?? "", p.url]);
+    .map((p) => [p.name, p.site, p.lastPrice ?? "", p.lastStock, p.lastStockQuantity ?? "", p.url, formatCheckedAt(p)]);
   await googleSheets.overwriteSheet(
     process.env.GOOGLE_SHEETS_FLAGGED_TAB || "Flagged",
-    ["Name", "Site", "Price", "Stock", "Quantity", "URL"],
+    ["Name", "Site", "Price", "Stock", "Quantity", "URL", "Last Checked"],
     flaggedRows
   );
 
@@ -207,12 +216,12 @@ async function syncGoogleSheets(results) {
   for (const p of allProducts) {
     const stats = await getStats24h(p._id);
     if (stats && stats.min !== stats.max) {
-      variationRows.push([p.name, p.site, p.lastPrice ?? "", stats.min, stats.max, stats.avg, p.lastStock, p.url]);
+      variationRows.push([p.name, p.site, p.lastPrice ?? "", stats.min, stats.max, stats.avg, p.lastStock, p.url, formatCheckedAt(p)]);
     }
   }
   await googleSheets.overwriteSheet(
     process.env.GOOGLE_SHEETS_VARIATION_TAB || "Price Variation",
-    ["Name", "Site", "Current", "Min (24h)", "Max (24h)", "Avg (24h)", "Stock", "URL"],
+    ["Name", "Site", "Current", "Min (24h)", "Max (24h)", "Avg (24h)", "Stock", "URL", "Last Checked"],
     variationRows
   );
 }

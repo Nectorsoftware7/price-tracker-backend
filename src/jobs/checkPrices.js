@@ -297,28 +297,13 @@ async function syncGoogleSheets() {
     flaggedRows
   );
 
-  // A price-variation row's Stock column already says "out_of_stock", but that's easy
-  // to miss next to a spreadsheet full of prices — a currently-unavailable item's price
-  // history is also less meaningful (it isn't actively being sold at that price right
-  // now). Prefixing the name makes it visible at a glance without opening the row.
-  const stockLabel = (status) =>
-    status === "out_of_stock" ? "⚠️ OUT OF STOCK — " : status === "low_stock" ? "🟠 LOW STOCK — " : "";
-
+  // Out-of-stock/low-stock status belongs to the Flagged tab (its whole purpose is
+  // exactly that) — Price Variation's Name column stays plain, no stock-status prefix.
   const variationRows = [];
   for (const p of allProducts) {
     const stats = await getStats24h(p._id);
     if (stats && stats.min !== stats.max) {
-      variationRows.push([
-        `${stockLabel(p.lastStock)}${p.name}`,
-        p.site,
-        p.lastPrice ?? "",
-        stats.min,
-        stats.max,
-        stats.avg,
-        p.lastStock,
-        p.url,
-        formatCheckedAt(p),
-      ]);
+      variationRows.push([p.name, p.site, p.lastPrice ?? "", stats.min, stats.max, stats.avg, p.lastStock, p.url, formatCheckedAt(p)]);
     }
   }
   await googleSheets.overwriteSheet(

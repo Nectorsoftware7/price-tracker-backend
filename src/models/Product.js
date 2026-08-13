@@ -122,4 +122,4 @@ async function remove(id) {
   await getPool().query("DELETE FROM products WHERE id = ?", [id]);
 }
 
-module.exports = { findAll, findActive, findById, create, update, recordCheckResult, remove };
+module.exports = { findAll, findActive, findById, create, update, recordCheckResult, remove, normalizeUrl };

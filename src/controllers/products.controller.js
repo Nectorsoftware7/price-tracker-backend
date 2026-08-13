@@ -46,10 +46,10 @@ const bulkImportProducts = asyncHandler(async (req, res) => {
 
   for (const row of rows) {
     const name = (row.name || "").trim();
-    const url = (row.url || "").trim();
+    const rawUrl = (row.url || "").trim();
     const site = (row.site || "").trim().toLowerCase();
 
-    if (!name || !url) {
+    if (!name || !rawUrl) {
       skipped.push({ ...row, reason: "Missing name or URL" });
       continue;
     }
@@ -57,14 +57,26 @@ const bulkImportProducts = asyncHandler(async (req, res) => {
       skipped.push({ ...row, reason: `Unknown platform "${row.site}"` });
       continue;
     }
-    if (existingUrls.has(url)) {
+
+    // Compare against the *normalized* URL (query string stripped, same as what
+    // Product.create stores) — comparing the raw pasted URL let a duplicate slip
+    // past this check and hit the DB's unique constraint instead, which aborted the
+    // whole remaining batch with a generic 400 rather than being skipped cleanly.
+    const normalizedUrl = Product.normalizeUrl(site, rawUrl);
+    if (existingUrls.has(normalizedUrl)) {
       skipped.push({ ...row, reason: "Already tracked (duplicate URL)" });
       continue;
     }
 
-    const product = await Product.create({ name, site, url });
-    existingUrls.add(product.url);
-    created.push(product);
+    try {
+      const product = await Product.create({ name, site, url: rawUrl });
+      existingUrls.add(product.url);
+      created.push(product);
+    } catch (err) {
+      // A row-level failure (DB constraint, unexpected data, etc.) shouldn't abort
+      // the rest of the batch — record it and keep going.
+      skipped.push({ ...row, reason: `Failed: ${err.message}` });
+    }
   }
 
   if (created.length > 0) {

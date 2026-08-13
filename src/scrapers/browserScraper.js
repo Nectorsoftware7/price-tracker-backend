@@ -154,8 +154,37 @@ function getProxyConfig(url) {
   };
 }
 
+// Render's free tier caps the whole instance at 512MB — a single headless Chromium
+// instance alone runs 150-300MB+, so two or three overlapping checks (a manual
+// "Check now" click landing during the hourly cron run, or a bulk "Check all
+// products" click on top of either) were enough to OOM-crash the entire process,
+// taking down every in-flight request with it (surfacing as random 502s and checks
+// silently failing). A simple in-process queue guarantees only one Chromium instance
+// is ever alive at a time, no matter how many check requests arrive concurrently.
+let scrapeQueue = Promise.resolve();
+
 async function getPriceWithBrowser(url, priceSelector, stockSelector) {
-  const browser = await chromium.launch({ headless: true, proxy: getProxyConfig(url) });
+  const runScrape = () => getPriceWithBrowserUnqueued(url, priceSelector, stockSelector);
+  const result = scrapeQueue.then(runScrape, runScrape);
+  // Chain the *next* call onto this one's settlement (success or failure) rather than
+  // its return value, so a failed scrape doesn't wedge the queue permanently stuck.
+  scrapeQueue = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
+
+async function getPriceWithBrowserUnqueued(url, priceSelector, stockSelector) {
+  const browser = await chromium.launch({
+    headless: true,
+    proxy: getProxyConfig(url),
+    // --disable-dev-shm-usage: Docker containers default to a tiny 64MB /dev/shm,
+    // which Chromium normally uses heavily and crashes/hangs against — this makes it
+    // fall back to disk-backed temp files instead. Standard fix for exactly this
+    // "works locally, flaky/crashes in a Docker container" Playwright symptom.
+    args: ["--disable-dev-shm-usage", "--disable-gpu"],
+  });
   try {
     const page = await browser.newPage({
       userAgent:

@@ -27,6 +27,57 @@ const createProduct = asyncHandler(async (req, res) => {
   res.status(201).json(product);
 });
 
+// Matches the frontend's <select> options (Products.jsx) — a bulk-imported "Platform"
+// column value (e.g. "Flipkart", pasted straight out of a spreadsheet) needs mapping
+// onto these exact internal site keys.
+const KNOWN_SITES = ["shopify", "woocommerce", "flipkart", "meesho", "jiomart", "tira", "nykaa", "snapdeal", "purplle"];
+
+// Bulk-add many products at once (e.g. pasted straight from a spreadsheet) instead of
+// one-by-one through the form. Intentionally does NOT scrape each one immediately —
+// with dozens of rows that would be a very slow, easily-timed-out request (each check
+// is a full Playwright browser launch) — "Check all products" afterward covers it.
+const bulkImportProducts = asyncHandler(async (req, res) => {
+  const rows = Array.isArray(req.body.rows) ? req.body.rows : [];
+  const created = [];
+  const skipped = [];
+
+  const existing = await Product.findAll();
+  const existingUrls = new Set(existing.map((p) => p.url));
+
+  for (const row of rows) {
+    const name = (row.name || "").trim();
+    const url = (row.url || "").trim();
+    const site = (row.site || "").trim().toLowerCase();
+
+    if (!name || !url) {
+      skipped.push({ ...row, reason: "Missing name or URL" });
+      continue;
+    }
+    if (!KNOWN_SITES.includes(site)) {
+      skipped.push({ ...row, reason: `Unknown platform "${row.site}"` });
+      continue;
+    }
+    if (existingUrls.has(url)) {
+      skipped.push({ ...row, reason: "Already tracked (duplicate URL)" });
+      continue;
+    }
+
+    const product = await Product.create({ name, site, url });
+    existingUrls.add(product.url);
+    created.push(product);
+  }
+
+  if (created.length > 0) {
+    await sendTelegramMessage(
+      `➕ <b>Bulk import</b>\n\n${created.length} product(s) added` +
+        (skipped.length ? `, ${skipped.length} skipped` : "") +
+        `\n\n${created.map((p) => `• ${p.name} (${p.site})`).join("\n")}`
+    );
+  }
+
+  res.status(201).json({ created, skipped });
+});
+
 const updateProduct = asyncHandler(async (req, res) => {
   const product = await Product.update(req.params.id, req.body);
   if (!product) throw new ApiError(404, "Not found");
@@ -94,6 +145,7 @@ const checkNow = asyncHandler(async (req, res) => {
 module.exports = {
   listProducts,
   createProduct,
+  bulkImportProducts,
   updateProduct,
   deleteProduct,
   getHistory,

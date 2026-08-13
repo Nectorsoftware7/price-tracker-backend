@@ -3,6 +3,7 @@ const requireAuth = require("../middlewares/auth.middleware");
 const {
   listProducts,
   createProduct,
+  bulkImportProducts,
   updateProduct,
   deleteProduct,
   getHistory,
@@ -16,6 +17,7 @@ const router = express.Router();
 
 router.get("/", requireAuth, listProducts);
 router.post("/", requireAuth, createProduct);
+router.post("/bulk-import", requireAuth, bulkImportProducts);
 router.put("/:id", requireAuth, updateProduct);
 router.delete("/:id", requireAuth, deleteProduct);
 router.get("/:id/history", requireAuth, getHistory);

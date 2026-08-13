@@ -118,7 +118,12 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
     }
   }
 
-  await PricePoint.create(product._id, newPrice);
+  // A brand-new product whose very first check finds it already "Currently
+  // unavailable" has no price at all yet (not even a prior one to fall back to) —
+  // nothing meaningful to record as a price-history point.
+  if (newPrice != null) {
+    await PricePoint.create(product._id, newPrice);
+  }
 
   const checkedAt = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
 
@@ -192,7 +197,10 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
 async function checkOneProduct(product) {
   try {
     let result = await fetchProduct(product);
-    if (typeof result.price !== "number" || isNaN(result.price)) {
+    // A "Currently unavailable" product genuinely has no price displayed anywhere on
+    // the page — null is the correct scrape result there, not a failure. Any other
+    // status still requires a real numeric price.
+    if (result.stock !== "out_of_stock" && (typeof result.price !== "number" || isNaN(result.price))) {
       throw new Error(`Scraper returned an invalid price: ${result.price}`);
     }
 

@@ -271,6 +271,25 @@ async function getPriceWithBrowser(url, priceSelector, stockSelector) {
       throw new Error(`No JSON-LD or __NEXT_DATA__ price data found on this page, and no priceSelector was configured as a fallback. Debug: ${JSON.stringify(debug)}`);
     }
 
+    // JioMart genuinely renders no price element at all for a product marked
+    // "Currently unavailable" — the price selector was never going to appear, and
+    // treating that as a scrape *error* (thrown, caught, silently swallowed by
+    // checkOneProduct) meant these just sat stuck at "Unknown"/never-checked forever
+    // instead of being recorded as out of stock.
+    const currentlyUnavailable = await page
+      .locator("text=Currently unavailable")
+      .first()
+      .isVisible({ timeout: 1000 })
+      .catch(() => false);
+    if (currentlyUnavailable) {
+      return {
+        price: null,
+        stock: "out_of_stock",
+        stockDetail: { status: "out_of_stock", raw: "Currently unavailable", quantity: null },
+        source: "css-selector",
+      };
+    }
+
     // 15s was tuned against a home connection — a live Render failure showed JioMart's
     // price selector still not visible after even 25s on Render's network, though the
     // same page loads it well within that on a local run — investigating whether this

@@ -157,6 +157,35 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
 
   const priceChanged = oldPrice != null && newPrice !== oldPrice;
   const stockChanged = Boolean(newStock && newStock !== oldStock) || quantityChanged;
+
+  // Flagged/Price Variation/Log are current-state snapshots, rebuilt fresh every sync —
+  // none of them keep a record of *when* a specific price move or stock transition
+  // happened (a "back in stock" item just disappears from Flagged, with no trace of
+  // when it went out or came back). This appends one row per actual event, immediately,
+  // as the Telegram alert for it fires — a real timestamped history, not a snapshot.
+  if (priceChanged || stockChanged) {
+    const changeRows = [];
+    if (priceChanged) {
+      changeRows.push([
+        checkedAt,
+        product.name,
+        product.site,
+        newPrice > oldPrice ? "Price increase" : "Price decrease",
+        `₹${oldPrice}`,
+        `₹${newPrice}`,
+        product.url,
+      ]);
+    }
+    if (newStock && newStock !== oldStock) {
+      changeRows.push([checkedAt, product.name, product.site, "Stock change", oldStock || "unknown", newStock, product.url]);
+    }
+    const changesTab = process.env.GOOGLE_SHEETS_CHANGES_TAB || "Price & Stock Changes";
+    await googleSheets
+      .ensureHeader(changesTab, ["Timestamp", "Name", "Site", "Type", "Old", "New", "URL"])
+      .then(() => googleSheets.appendRows(changesTab, changeRows))
+      .catch((err) => console.error("Google Sheets change-log append failed:", err.message));
+  }
+
   return { newPrice, priceChanged, stockChanged };
 }
 

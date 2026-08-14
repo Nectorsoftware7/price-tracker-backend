@@ -57,8 +57,16 @@ async function fetchViaFastPathOrBrowser(url, priceSelector, stockSelector) {
     fastPath = `failed: ${err.message}`;
   }
   console.log(`[fast-fetch] ${url} -> browser fallback: ${fastPath}`);
-  const result = await getPriceWithBrowser(url, priceSelector, stockSelector);
-  return { ...result, fastPath };
+  try {
+    const result = await getPriceWithBrowser(url, priceSelector, stockSelector);
+    return { ...result, fastPath };
+  } catch (err) {
+    // When the browser fails too, the surfaced error is all anyone sees — without the
+    // cheap path's outcome attached, a site that's failing for one reason looks
+    // identical to a site failing for another.
+    err.message = `${err.message} [fast path: ${fastPath}]`;
+    throw err;
+  }
 }
 
 async function fetchProduct(product) {
@@ -370,9 +378,18 @@ async function syncGoogleSheets() {
 
   // Out-of-stock/low-stock status belongs to the Flagged tab (its whole purpose is
   // exactly that) — Price Variation's Name column stays plain, no stock-status prefix.
+  //
+  // One grouped query for every product's 24h stats, not one query per product: the
+  // per-product version issued 139 round-trips to a remote MySQL host and measured
+  // ~37s against ~205ms for the bulk equivalent — and since this runs after *every*
+  // manual "Check now", it, not the scrape, was what made that button feel slow.
+  // getStats24h's extra "fall back to the single latest point" behaviour isn't needed
+  // here: a product with no points in the window yields min === max either way, and is
+  // filtered out below regardless.
+  const statsByProduct = await PricePoint.statsForAllProducts(new Date(Date.now() - 24 * 60 * 60 * 1000), new Date());
   const variationRows = [];
   for (const p of allProducts) {
-    const stats = await getStats24h(p._id);
+    const stats = statsByProduct[p._id];
     if (stats && stats.min !== stats.max) {
       variationRows.push([p.name, p.site, p.lastPrice ?? "", stats.min, stats.max, stats.avg, p.lastStock, p.url, formatCheckedAt(p)]);
     }

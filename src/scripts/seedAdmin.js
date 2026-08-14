@@ -8,6 +8,7 @@ const User = require("../models/User");
 async function main() {
   const username = process.env.ADMIN_USERNAME;
   const password = process.env.ADMIN_PASSWORD;
+  const role = process.env.ADMIN_ROLE || "admin";
   if (!username || !password) {
     throw new Error("Set ADMIN_USERNAME and ADMIN_PASSWORD in .env before seeding");
   }
@@ -18,11 +19,11 @@ async function main() {
 
   if (existing) {
     const { getPool } = require("../config/db");
-    await getPool().query("UPDATE users SET password_hash = ? WHERE username = ?", [passwordHash, username]);
-    console.log(`Updated password for existing admin user "${username}"`);
+    await getPool().query("UPDATE users SET password_hash = ?, role = ? WHERE username = ?", [passwordHash, role, username]);
+    console.log(`Updated password/role for existing user "${username}" (role: ${role})`);
   } else {
-    await User.create({ username, passwordHash });
-    console.log(`Created admin user "${username}"`);
+    await User.create({ username, passwordHash, role });
+    console.log(`Created user "${username}" (role: ${role})`);
   }
   process.exit(0);
 }

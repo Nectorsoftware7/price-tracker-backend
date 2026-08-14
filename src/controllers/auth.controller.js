@@ -13,8 +13,8 @@ const login = asyncHandler(async (req, res) => {
   const valid = await bcrypt.compare(password, user.password_hash);
   if (!valid) throw new ApiError(401, "Invalid username or password");
 
-  const token = signToken({ sub: user.id, username: user.username });
-  res.json({ token, user: { _id: user.id, username: user.username } });
+  const token = signToken({ sub: user.id, username: user.username, role: user.role });
+  res.json({ token, user: { _id: user.id, username: user.username, role: user.role } });
 });
 
 const me = asyncHandler(async (req, res) => {

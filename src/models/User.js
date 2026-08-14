@@ -2,7 +2,14 @@ const { getPool } = require("../config/db");
 
 function toApiShape(row) {
   if (!row) return null;
-  return { _id: row.id, username: row.username, role: row.role, status: row.status, createdAt: row.created_at };
+  return {
+    _id: row.id,
+    username: row.username,
+    role: row.role,
+    status: row.status,
+    active: Boolean(row.active),
+    createdAt: row.created_at,
+  };
 }
 
 async function findByUsername(username) {
@@ -34,4 +41,9 @@ async function approve(id, role) {
   return toApiShape(await findById(id));
 }
 
-module.exports = { findByUsername, findById, findAll, create, approve, toApiShape };
+async function setActive(id, active) {
+  await getPool().query("UPDATE users SET active = ? WHERE id = ?", [active ? 1 : 0, id]);
+  return toApiShape(await findById(id));
+}
+
+module.exports = { findByUsername, findById, findAll, create, approve, setActive, toApiShape };

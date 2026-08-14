@@ -7,9 +7,10 @@ const asyncHandler = require("../utils/asyncHandler");
 
 const googleClient = process.env.GOOGLE_CLIENT_ID ? new OAuth2Client(process.env.GOOGLE_CLIENT_ID) : null;
 
-// A distinct message the frontend matches on to show a clean "under review" screen
-// instead of a generic login error.
+// Distinct messages the frontend matches on to show a clean screen instead of a
+// generic login error.
 const PENDING_REVIEW = "ACCOUNT_PENDING_REVIEW";
+const ACCOUNT_SUSPENDED = "ACCOUNT_SUSPENDED";
 
 const login = asyncHandler(async (req, res) => {
   const { username, password } = req.body;
@@ -19,6 +20,7 @@ const login = asyncHandler(async (req, res) => {
 
   const valid = await bcrypt.compare(password, user.password_hash);
   if (!valid) throw new ApiError(401, "Invalid username or password");
+  if (!user.active) throw new ApiError(403, ACCOUNT_SUSPENDED);
   if (user.status !== "approved" || !user.role) throw new ApiError(403, PENDING_REVIEW);
 
   const token = signToken({ sub: user.id, username: user.username, role: user.role });
@@ -48,6 +50,7 @@ const googleLogin = asyncHandler(async (req, res) => {
     user = await User.create({ username: payload.email, passwordHash: null, role: null, status: "pending" });
   }
 
+  if (!user.active) throw new ApiError(403, ACCOUNT_SUSPENDED);
   if (user.status !== "approved" || !user.role) throw new ApiError(403, PENDING_REVIEW);
 
   const token = signToken({ sub: user.id, username: user.username, role: user.role });

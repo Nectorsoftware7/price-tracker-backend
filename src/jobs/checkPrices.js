@@ -4,6 +4,7 @@ const StockEvent = require("../models/StockEvent");
 const { getShopifyProduct } = require("../scrapers/shopify");
 const { getWooCommerceProduct } = require("../scrapers/woocommerce");
 const { getPriceWithBrowser } = require("../scrapers/browserScraper");
+const { getPriceWithFetch } = require("../scrapers/fastFetch");
 const { sendTelegramMessage } = require("../services/telegram");
 const { getExactStockQuantity: getFlipkartExactStock } = require("../services/flipkartAdmin");
 const googleSheets = require("../services/googleSheets");
@@ -27,6 +28,28 @@ const SITE_DEFAULT_SELECTORS = {
   },
 };
 
+// Tries the cheap no-browser fetch first and only launches Chromium when that can't
+// read the page confidently.
+//
+// Worth it on two axes: a browser pulls the entire page (scripts, images, fonts,
+// trackers — ~240 requests on Snapdeal) when the price was already present in the very
+// first response, which on a metered residential proxy is the difference between
+// ~2.7 MB and ~55 KB per check; and it turns a 30-100s Chromium run into ~0.3s, which
+// is what makes a manual "Check now" feel instant.
+//
+// getPriceWithFetch returns null (rather than guessing) whenever the page needs real
+// rendering, so the browser remains the authority for anything it can't prove.
+async function fetchViaFastPathOrBrowser(url, priceSelector, stockSelector) {
+  try {
+    const fast = await getPriceWithFetch(url);
+    if (fast) return fast;
+  } catch (err) {
+    // Blocked, timed out, unparseable — all just mean "let the browser try".
+    console.log(`[fast-fetch] ${url} -> falling back to browser: ${err.message}`);
+  }
+  return getPriceWithBrowser(url, priceSelector, stockSelector);
+}
+
 async function fetchProduct(product) {
   const defaults = SITE_DEFAULT_SELECTORS[product.site];
   const priceSelector = product.priceSelector || defaults?.priceSelector;
@@ -42,7 +65,7 @@ async function fetchProduct(product) {
       // pays (it reflects platform-wide sale discounts the Seller API doesn't know
       // about). If a Seller Hub SKU is configured, only the stock quantity is
       // overlaid from the Flipkart Seller API, which is authoritative for that.
-      const result = await getPriceWithBrowser(product.url, priceSelector, stockSelector);
+      const result = await fetchViaFastPathOrBrowser(product.url, priceSelector, stockSelector);
       if (product.flipkartSku) {
         const exact = await getFlipkartExactStock(product.flipkartSku);
         if (exact) {
@@ -66,7 +89,7 @@ async function fetchProduct(product) {
       // __NEXT_DATA__ / CSS-selector fallback chain in getPriceWithBrowser.
       // If a site doesn't expose JSON-LD, priceSelector/stockSelector must be
       // supplied per-product (same as any other custom site).
-      return getPriceWithBrowser(product.url, priceSelector, stockSelector);
+      return fetchViaFastPathOrBrowser(product.url, priceSelector, stockSelector);
     default:
       throw new Error(`Unknown site type: ${product.site}`);
   }

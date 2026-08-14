@@ -1,6 +1,11 @@
 const { chromium } = require("playwright-extra");
 const stealthPlugin = require("puppeteer-extra-plugin-stealth")();
 const { classifyStockText } = require("./stockClassifier");
+const {
+  availabilityUrlToStatus,
+  pickPriceFromJsonLdTexts,
+  pickPriceFromNextDataText,
+} = require("./productData");
 
 // Plain Playwright is trivially fingerprintable as a bot regardless of IP reputation —
 // navigator.webdriver=true, missing plugins/mimeTypes, headless-specific canvas/WebGL
@@ -12,84 +17,31 @@ const { classifyStockText } = require("./stockClassifier");
 // and may fix or reduce blocking on its own for some sites even without a proxy.
 chromium.use(stealthPlugin);
 
-// schema.org Availability URL -> our internal status
-const AVAILABILITY_MAP = {
-  InStock: "in_stock",
-  LimitedAvailability: "low_stock",
-  OutOfStock: "out_of_stock",
-  SoldOut: "out_of_stock",
-  Discontinued: "out_of_stock",
-  PreOrder: "unknown",
-};
-
 // Most e-commerce sites (Flipkart, Meesho, WooCommerce/Shopify pages too) embed a
 // schema.org Product <script type="application/ld+json"> block for SEO. It's far more
 // stable than CSS classes, which on React sites like Flipkart are auto-generated and
 // change on every rebuild. We prefer this when present, and only fall back to CSS
 // selectors when a site doesn't provide it.
+//
+// The DOM query stays in the page (it also picks up blocks injected client-side, which
+// a regex over the served HTML would miss — Snapdeal does exactly that), but it only
+// *collects* the raw script text. Deciding which offer counts as a usable price happens
+// in productData.js, shared with the no-browser path, so the two can't drift apart.
 async function extractFromJsonLd(page) {
-  return page.evaluate(() => {
-    const scripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
-    for (const script of scripts) {
-      try {
-        const data = JSON.parse(script.textContent);
-        const items = Array.isArray(data) ? data : [data];
-        for (const item of items) {
-          const offers = item.offers ? (Array.isArray(item.offers) ? item.offers[0] : item.offers) : null;
-          // Some sites (JioMart) include an offers.price field that's just an empty
-          // string — don't treat that as real data, fall through to CSS selectors.
-          if (offers && offers.price !== null && offers.price !== undefined && offers.price !== "" && !isNaN(parseFloat(offers.price))) {
-            return { price: offers.price, availability: offers.availability || null };
-          }
-        }
-      } catch {
-        // not valid/relevant JSON-LD, skip
-      }
-    }
-    return null;
-  });
-}
-
-function availabilityUrlToStatus(availability) {
-  if (!availability) return null;
-  const key = availability.split("/").pop(); // "https://schema.org/InStock" -> "InStock"
-  return AVAILABILITY_MAP[key] || "unknown";
+  const texts = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('script[type="application/ld+json"]')).map((s) => s.textContent)
+  );
+  return pickPriceFromJsonLdTexts(texts);
 }
 
 // Meesho (and other Next.js-rendered sites) embed the full page's server-side props in a
-// <script id="__NEXT_DATA__"> JSON blob instead of schema.org JSON-LD. We do a generic
-// recursive search for a `price` (number) and an `in_stock` (boolean) key rather than
-// hardcoding the exact props path, since that path can differ per site/page template.
+// <script id="__NEXT_DATA__"> JSON blob instead of schema.org JSON-LD.
 async function extractFromNextData(page) {
-  return page.evaluate(() => {
+  const text = await page.evaluate(() => {
     const el = document.getElementById("__NEXT_DATA__");
-    if (!el) return null;
-
-    let root;
-    try {
-      root = JSON.parse(el.textContent);
-    } catch {
-      return null;
-    }
-
-    let price = null;
-    let inStock = null;
-
-    function walk(obj, depth) {
-      if (!obj || typeof obj !== "object" || depth > 12) return;
-      for (const key of Object.keys(obj)) {
-        const val = obj[key];
-        if (price === null && key === "price" && typeof val === "number") price = val;
-        if (inStock === null && key === "in_stock" && typeof val === "boolean") inStock = val;
-        if (price !== null && inStock !== null) return;
-        if (val && typeof val === "object") walk(val, depth + 1);
-      }
-    }
-    walk(root, 0);
-
-    if (price === null) return null;
-    return { price, inStock };
+    return el ? el.textContent : null;
   });
+  return text ? pickPriceFromNextDataText(text) : null;
 }
 
 // Purplle's JSON-LD `offers.availability` is unreliable — it kept reporting InStock

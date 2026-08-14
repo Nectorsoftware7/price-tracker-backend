@@ -7,23 +7,28 @@ const asyncHandler = require("../utils/asyncHandler");
 
 const googleClient = process.env.GOOGLE_CLIENT_ID ? new OAuth2Client(process.env.GOOGLE_CLIENT_ID) : null;
 
+// A distinct message the frontend matches on to show a clean "under review" screen
+// instead of a generic login error.
+const PENDING_REVIEW = "ACCOUNT_PENDING_REVIEW";
+
 const login = asyncHandler(async (req, res) => {
   const { username, password } = req.body;
 
   const user = await User.findByUsername(username);
-  if (!user) throw new ApiError(401, "Invalid username or password");
+  if (!user || !user.password_hash) throw new ApiError(401, "Invalid username or password");
 
   const valid = await bcrypt.compare(password, user.password_hash);
   if (!valid) throw new ApiError(401, "Invalid username or password");
+  if (user.status !== "approved" || !user.role) throw new ApiError(403, PENDING_REVIEW);
 
   const token = signToken({ sub: user.id, username: user.username, role: user.role });
   res.json({ token, user: { _id: user.id, username: user.username, role: user.role } });
 });
 
 // "Sign in with Google" — the frontend gets an ID token from Google Identity Services
-// and sends it here to be verified. We only ever look a user up by the email Google
-// vouches for; there's no separate Google signup flow, so this only ever logs in an
-// account whose username was already set to that exact email by an admin.
+// and sends it here to be verified. A first-time Google sign-in for an email we don't
+// recognize self-registers a pending account (no role yet) instead of rejecting it
+// outright, so a superadmin can review it from the Users page and assign it a role.
 const googleLogin = asyncHandler(async (req, res) => {
   if (!googleClient) throw new ApiError(500, "Google login is not configured on the server");
 
@@ -38,8 +43,12 @@ const googleLogin = asyncHandler(async (req, res) => {
     throw new ApiError(401, "Invalid Google credential");
   }
 
-  const user = await User.findByUsername(payload.email);
-  if (!user) throw new ApiError(403, "This Google account isn't registered for dashboard access");
+  let user = await User.findByUsername(payload.email);
+  if (!user) {
+    user = await User.create({ username: payload.email, passwordHash: null, role: null, status: "pending" });
+  }
+
+  if (user.status !== "approved" || !user.role) throw new ApiError(403, PENDING_REVIEW);
 
   const token = signToken({ sub: user.id, username: user.username, role: user.role });
   res.json({ token, user: { _id: user.id, username: user.username, role: user.role } });

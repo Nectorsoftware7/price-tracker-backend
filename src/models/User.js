@@ -2,7 +2,7 @@ const { getPool } = require("../config/db");
 
 function toApiShape(row) {
   if (!row) return null;
-  return { _id: row.id, username: row.username, role: row.role, createdAt: row.created_at };
+  return { _id: row.id, username: row.username, role: row.role, status: row.status, createdAt: row.created_at };
 }
 
 async function findByUsername(username) {
@@ -10,13 +10,28 @@ async function findByUsername(username) {
   return rows[0] || null;
 }
 
-async function create({ username, passwordHash, role = "admin" }) {
+async function findById(id) {
+  const [rows] = await getPool().query("SELECT * FROM users WHERE id = ?", [id]);
+  return rows[0] || null;
+}
+
+async function findAll() {
+  const [rows] = await getPool().query("SELECT * FROM users ORDER BY created_at DESC");
+  return rows.map(toApiShape);
+}
+
+async function create({ username, passwordHash = null, role = "admin", status = "approved" }) {
   const [result] = await getPool().query(
-    "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-    [username, passwordHash, role]
+    "INSERT INTO users (username, password_hash, role, status) VALUES (?, ?, ?, ?)",
+    [username, passwordHash, role, status]
   );
   const [rows] = await getPool().query("SELECT * FROM users WHERE id = ?", [result.insertId]);
   return toApiShape(rows[0]);
 }
 
-module.exports = { findByUsername, create, toApiShape };
+async function approve(id, role) {
+  await getPool().query("UPDATE users SET role = ?, status = 'approved' WHERE id = ?", [role, id]);
+  return toApiShape(await findById(id));
+}
+
+module.exports = { findByUsername, findById, findAll, create, approve, toApiShape };

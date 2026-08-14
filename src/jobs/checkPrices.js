@@ -131,7 +131,7 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
     const direction = newPrice > oldPrice ? "📈 Price increased" : "📉 Price decreased";
     const stats = await getStats24h(product._id);
     await sendTelegramMessage(
-      `${direction}\n\n<b>${product.name}</b>\nOld price: ₹${oldPrice}\nNew price: ₹${newPrice}\n` +
+      `${direction}\n\n<b>${product.name}</b>\nPlatform: ${product.site}\nOld price: ₹${oldPrice}\nNew price: ₹${newPrice}\n` +
         (stats ? `Last 24h — min: ₹${stats.min}, max: ₹${stats.max}, avg: ₹${stats.avg}\n` : "") +
         `${product.url}\n🕐 ${checkedAt}`
     );
@@ -151,10 +151,18 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
   if (newStock && newStock !== oldStock) {
     if (newStock === "out_of_stock" || newStock === "low_stock") {
       const label = newStock === "out_of_stock" ? "🔴 OUT OF STOCK" : "🟠 LOW STOCK";
-      await sendTelegramMessage(`${label}\n\n<b>${product.name}</b>\n${product.url}\n🕐 ${checkedAt}`);
+      await sendTelegramMessage(`${label}\n\n<b>${product.name}</b>\nPlatform: ${product.site}\n${product.url}\n🕐 ${checkedAt}`);
     } else if (newStock === "in_stock" && oldStock === "out_of_stock") {
-      await sendTelegramMessage(`🟢 BACK IN STOCK\n\n<b>${product.name}</b>\n${product.url}\n🕐 ${checkedAt}`);
+      await sendTelegramMessage(`🟢 BACK IN STOCK\n\n<b>${product.name}</b>\nPlatform: ${product.site}\n${product.url}\n🕐 ${checkedAt}`);
     }
+  } else if (quantityChanged && oldQuantity != null) {
+    // Status stayed the same (still in_stock/low_stock) but the exact quantity moved —
+    // this used to only show up as a silent line in the hourly summary count, with no
+    // way to tell what actually changed without opening the dashboard.
+    const direction = newQuantity > oldQuantity ? "📦 Stock quantity increased" : "📦 Stock quantity dropped";
+    await sendTelegramMessage(
+      `${direction}: ${oldQuantity} → ${newQuantity}\n\n<b>${product.name}</b>\nPlatform: ${product.site}\n${product.url}\n🕐 ${checkedAt}`
+    );
   }
 
   await Product.recordCheckResult(product._id, { price: newPrice, stock: newStock, stockQuantity: newQuantity });

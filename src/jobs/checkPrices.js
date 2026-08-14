@@ -194,8 +194,25 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
   return { newPrice, priceChanged, stockChanged };
 }
 
+// Sites this server's IP can't currently reach at all (blocked outright, or need a
+// paid proxy tier we don't have yet) — checked here too, not just in the bulk cron
+// loop, so a manual "Check now" on one of these fails in milliseconds with a clear
+// reason instead of hanging for 100+ seconds on a scrape that was always going to
+// fail. That matters more now than it used to: scrapes are serialized through a
+// single in-process queue (to avoid OOM-crashing Render's 512MB instance), so one
+// slow doomed check used to block every other check queued behind it too.
+function assertSiteReachable(site) {
+  const skipSites = (process.env.PRICE_CHECK_SKIP_SITES || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (skipSites.includes(site)) {
+    throw new Error(
+      `${site} is currently blocked from this server's IP and has no proxy configured — needs a residential proxy/local worker, see PRICE_CHECK_SKIP_SITES.`
+    );
+  }
+}
+
 async function checkOneProduct(product) {
   try {
+    assertSiteReachable(product.site);
     let result = await fetchProduct(product);
     // A "Currently unavailable" product genuinely has no price displayed anywhere on
     // the page — null is the correct scrape result there, not a failure. Any other
@@ -325,6 +342,12 @@ async function checkOneProductById(id) {
   const product = await Product.findById(id);
   if (!product) throw new Error("Product not found");
   const result = await checkOneProduct(product);
+
+  // checkOneProduct catches its own errors (so a bulk run can report a per-product
+  // failure and keep going) — but for a single manual "Check now" click, swallowing
+  // the failure here just left the row silently unchanged with no feedback at all,
+  // looking like the button did nothing. Surface it so the dashboard can show it.
+  if (!result.ok) throw new Error(result.error);
 
   // A real price/stock change already gets its own detailed alert from
   // applyCheckResult. A manual "Check now" click is a deliberate verification action

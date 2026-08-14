@@ -290,6 +290,29 @@ async function getPriceWithBrowserUnqueued(url, priceSelector, stockSelector) {
       };
     }
 
+    // A Flipkart listing with no active seller renders no JSON-LD/price at all and
+    // shows a generic "Location not set / Select delivery location" prompt instead —
+    // confirmed by loading the exact failing URL directly: no price anywhere on the
+    // page, in a real logged-in browser, nothing Render/IP-specific about it. The
+    // clearest universal signal that a listing is actually unsellable (rather than
+    // this just being a slow/failed render) is the complete absence of Flipkart's
+    // buy buttons, which are always present ADD TO CART/BUY NOW when a product can be
+    // purchased.
+    if (url.includes("flipkart.com")) {
+      const hasBuyButton = await page.evaluate(() => {
+        const text = (document.body.innerText || "").toUpperCase();
+        return text.includes("ADD TO CART") || text.includes("BUY NOW");
+      });
+      if (!hasBuyButton) {
+        return {
+          price: null,
+          stock: "out_of_stock",
+          stockDetail: { status: "out_of_stock", raw: "No buy button / no active seller found", quantity: null },
+          source: "css-selector",
+        };
+      }
+    }
+
     // Fallback: CSS selectors (only reached if the page has no usable JSON-LD or __NEXT_DATA__)
     if (!priceSelector) {
       const debug = await page.evaluate(() => ({

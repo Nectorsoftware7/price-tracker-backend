@@ -122,6 +122,17 @@ const getHistory = asyncHandler(async (req, res) => {
   res.json({ points, stats24h: stats });
 });
 
+// One call for the price-stats of every tracked product, instead of the Price & Stock
+// page firing a separate /history request per product (139 concurrent requests on a
+// full list — see PricePoint.statsForAllProducts for why that was a real problem, not
+// just something a client-side cache could paper over).
+const getAllStats = asyncHandler(async (req, res) => {
+  const { from, to } = req.query;
+  const toDate = to ? new Date(to) : new Date();
+  const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 24 * 60 * 60 * 1000);
+  res.json(await PricePoint.statsForAllProducts(fromDate, toDate));
+});
+
 const getStockEvents = asyncHandler(async (req, res) => {
   res.json(await StockEvent.findByProduct(req.params.id, 50));
 });
@@ -161,6 +172,7 @@ module.exports = {
   updateProduct,
   deleteProduct,
   getHistory,
+  getAllStats,
   getStockEvents,
   checkAll,
   reportCheck,

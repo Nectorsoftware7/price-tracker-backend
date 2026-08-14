@@ -32,4 +32,30 @@ async function findLatest(productId, limit = 1) {
   return rows.map(toApiShape);
 }
 
-module.exports = { create, findSince, findBetween, findLatest };
+// One aggregate query for every product's stats in a window, instead of the caller
+// looping findSince/findBetween per product (the Price & Stock page used to fire one
+// HTTP request per tracked product — 139 concurrent requests on a full list, which
+// could overwhelm a free-tier instance and looked like the page hanging on "Loading..."
+// forever, worse the more times it was re-visited since old in-flight requests weren't
+// cancelled). A single GROUP BY gets every product's min/max/avg/count in one round trip.
+async function statsForAllProducts(fromDate, toDate) {
+  const [rows] = await getPool().query(
+    `SELECT product_id, MIN(price) AS min, MAX(price) AS max, AVG(price) AS avg, COUNT(*) AS samples
+     FROM price_points
+     WHERE checked_at >= ? AND checked_at <= ?
+     GROUP BY product_id`,
+    [fromDate, toDate]
+  );
+  const byProduct = {};
+  for (const row of rows) {
+    byProduct[row.product_id] = {
+      min: Number(row.min),
+      max: Number(row.max),
+      avg: Math.round(Number(row.avg) * 100) / 100,
+      samples: row.samples,
+    };
+  }
+  return byProduct;
+}
+
+module.exports = { create, findSince, findBetween, findLatest, statsForAllProducts };

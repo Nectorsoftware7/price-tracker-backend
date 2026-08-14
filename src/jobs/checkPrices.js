@@ -39,15 +39,26 @@ const SITE_DEFAULT_SELECTORS = {
 //
 // getPriceWithFetch returns null (rather than guessing) whenever the page needs real
 // rendering, so the browser remains the authority for anything it can't prove.
+// Whether the cheap path actually works is a per-site, per-IP fact that can only be
+// learned from where production runs — a plain request is far easier to fingerprint as
+// a bot than a stealth browser, so a site reachable this way from a laptop may still
+// refuse the server. The outcome is recorded on the result (and surfaced by
+// "Check now") rather than only logged, so the cheap-path hit rate per site stays
+// answerable at any time — that hit rate is what the whole proxy bandwidth budget
+// rests on.
 async function fetchViaFastPathOrBrowser(url, priceSelector, stockSelector) {
+  let fastPath;
   try {
     const fast = await getPriceWithFetch(url);
-    if (fast) return fast;
+    if (fast) return { ...fast, fastPath: "hit" };
+    fastPath = "declined (no confident price/stock in raw HTML)";
   } catch (err) {
     // Blocked, timed out, unparseable — all just mean "let the browser try".
-    console.log(`[fast-fetch] ${url} -> falling back to browser: ${err.message}`);
+    fastPath = `failed: ${err.message}`;
   }
-  return getPriceWithBrowser(url, priceSelector, stockSelector);
+  console.log(`[fast-fetch] ${url} -> browser fallback: ${fastPath}`);
+  const result = await getPriceWithBrowser(url, priceSelector, stockSelector);
+  return { ...result, fastPath };
 }
 
 async function fetchProduct(product) {
@@ -285,6 +296,10 @@ async function checkOneProduct(product) {
       // check as "changed" too, so newly-added products show up in the Log
       // immediately instead of waiting for their first real price/stock move.
       changed: priceChanged || stockChanged || product.lastCheckedAt == null,
+      // Which strategy actually produced this reading, and (when the cheap path was
+      // skipped) why — see fetchViaFastPathOrBrowser.
+      source: result.source,
+      fastPath: result.fastPath ?? null,
       ok: true,
     };
   } catch (err) {
@@ -395,7 +410,12 @@ async function checkOneProductById(id) {
   // product) previously never touched Sheets — only the bulk hourly/cron run did. A
   // newly-added product would then sit invisible in the Log until the next bulk run.
   await syncGoogleSheets().catch((err) => console.error("Google Sheets sync failed:", err.message));
-  return Product.findById(id);
+
+  // Report how this reading was obtained alongside the product. Not persisted — it
+  // describes this one check, not the product — but it's what makes the cheap-path hit
+  // rate observable from production rather than inferred from timings.
+  const updated = await Product.findById(id);
+  return { ...updated, lastCheckSource: result.source ?? null, lastCheckFastPath: result.fastPath ?? null };
 }
 
 async function reportCheckResult(id, { price, stock, stockDetail }) {

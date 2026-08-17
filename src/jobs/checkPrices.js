@@ -219,6 +219,12 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
   // when it went out or came back). This appends one row per actual event, immediately,
   // as the Telegram alert for it fires — a real timestamped history, not a snapshot.
   if (priceChanged || stockChanged) {
+    // Price is appended as the LAST column, not inserted next to Old/New — this tab is
+    // append-only (appendRows never rewrites existing rows), so adding a column in the
+    // middle would leave every already-written row's data sitting one cell to the left
+    // of its actual header. Tacking it on the end means old rows just show a blank
+    // Price cell, and only new rows carry it.
+    const currentPrice = newPrice != null ? `₹${newPrice}` : "";
     const changeRows = [];
     if (priceChanged) {
       changeRows.push([
@@ -229,14 +235,18 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
         `₹${oldPrice}`,
         `₹${newPrice}`,
         product.url,
+        currentPrice,
       ]);
     }
     if (newStock && newStock !== oldStock) {
-      changeRows.push([checkedAt, product.name, product.site, "Stock change", oldStock || "unknown", newStock, product.url]);
+      // e.g. an "unknown -> in_stock" row previously only showed the status flipped,
+      // with no way to tell what it came back in stock *at* without opening the
+      // dashboard separately.
+      changeRows.push([checkedAt, product.name, product.site, "Stock change", oldStock || "unknown", newStock, product.url, currentPrice]);
     }
     const changesTab = process.env.GOOGLE_SHEETS_CHANGES_TAB || "Price & Stock Changes";
     await googleSheets
-      .ensureHeader(changesTab, ["Timestamp", "Name", "Site", "Type", "Old", "New", "URL"])
+      .ensureHeader(changesTab, ["Timestamp", "Name", "Site", "Type", "Old", "New", "URL", "Price"])
       .then(() => googleSheets.appendRows(changesTab, changeRows))
       .catch((err) => console.error("Google Sheets change-log append failed:", err.message));
   }

@@ -1,9 +1,9 @@
 # Price Tracker — Backend
 
-Express API + MySQL + Playwright-based scraper that tracks live price/stock across 9 e-commerce
-sites (Flipkart, Shopify, WooCommerce, JioMart, Purplle, Snapdeal, Nykaa, Tira, Meesho), sends
-Telegram alerts on changes, logs to Google Sheets, and uses AI (Hermes via OpenRouter) to
-auto-reply to product reviews and WordPress Contact Form 7 submissions.
+Express API + MySQL + a Playwright-backed scraper that tracks live price/stock across 9
+e-commerce sites (Flipkart, Shopify, WooCommerce, JioMart, Purplle, Snapdeal, Nykaa, Tira,
+Meesho), sends Telegram alerts on changes, logs to Google Sheets, and uses AI (Hermes via
+OpenRouter) to auto-reply to product reviews and WordPress Contact Form 7 submissions.
 
 The companion frontend dashboard lives in a separate repo — see
 [price-tracker-frontend](https://github.com/Nectorsoftware7/price-tracker-frontend).
@@ -12,8 +12,14 @@ The companion frontend dashboard lives in a separate repo — see
 
 - **Node.js + Express** — API server
 - **MySQL** (`mysql2`, raw SQL, no ORM) — products, price history, stock events, contact submissions
-- **Playwright** (headless Chromium) — the scraper: opens each product page and reads live
-  price/stock, since most of these sites don't expose a public data API
+- **Scraping — a plain-HTTP fetch first, Playwright as the fallback** (`src/scrapers/fastFetch.js`
+  / `src/scrapers/browserScraper.js`): most sites already embed price/stock as schema.org JSON-LD
+  in the server-rendered HTML, so a single no-browser HTTPS request is usually enough — a full
+  Chromium launch only runs when that can't read the page confidently (no browser needed = far
+  less data pulled per check, which matters directly on a metered residential proxy, and ~40x
+  faster: ~0.7s vs ~30s). **Playwright** (headless Chromium) is what actually renders a page when
+  the fast path isn't enough — real JS execution, for sites where price/stock only appears after
+  client-side rendering, or where a plain request gets blocked outright.
 - **`playwright-extra` + `puppeteer-extra-plugin-stealth`** — hides browser-automation fingerprints
   (`navigator.webdriver`, missing plugins, etc.) that anti-bot systems can detect independent of IP
 - **JWT** — dashboard login/auth
@@ -43,6 +49,27 @@ npm start
 
 Runs the API on `http://localhost:4000` (or `$PORT`). There is no in-process cron — trigger checks
 via the dashboard, or set up external scheduling (see "Deploying" below).
+
+### Local development — exposing localhost with ngrok
+
+[ngrok](https://ngrok.com) opens a temporary public HTTPS URL (e.g. `https://abcd1234.ngrok-free.app`)
+that forwards straight to a server running on your own machine — useful for anything that needs to
+*reach* your local server from the outside, since `localhost` itself is only reachable from your own
+machine. That covers:
+
+- **Shopify/WooCommerce webhooks** (order/product update notifications) — both platforms need a real
+  public HTTPS URL to send webhooks to; `localhost` doesn't work as a webhook target
+- **The WordPress Contact Form 7 → AI-reply integration** (`CF7_WEBHOOK_SECRET`) — same reason, the
+  WordPress site needs a public URL to call
+- **OAuth redirect URIs** during initial Shopify/WooCommerce app setup, before a permanent domain exists
+
+Only actually needed **before** this API has a real deployed URL (i.e. before/without Render). Once
+deployed — this project's live backend is `https://price-tracker-backend-ioqo.onrender.com` — every
+webhook/redirect should point there instead; ngrok's URL is temporary (a free-tier tunnel gets a new
+URL on every restart) and only forwards while your local machine and the `ngrok http 4000` process are
+both running, so it's a dev-only tool, not something to leave configured in production. `dashboard.ngrok.com`
+is ngrok's own web UI for managing tunnels, viewing an auth token, and inspecting live request/response
+traffic through a tunnel — handy for debugging exactly what a webhook payload contained.
 
 ## Environment variables
 
@@ -142,6 +169,12 @@ database rows, producing duplicate/contradictory Telegram alerts.
 - Site page structures change over time — if a check starts failing, check the server logs first
   (error messages include a debug snippet of what the scraper actually saw — useful for telling
   "site redesign" apart from "IP block" apart from "stale cache").
+- `POST /api/products/:id/check-now`'s response includes `lastCheckSource` (which extraction
+  strategy actually produced the reading — `json-ld-fetch`/`next-data-fetch` = the no-browser fast
+  path, `json-ld`/`next-data`/`css-selector` = Playwright) and `lastCheckFastPath` (`"hit"`, or the
+  reason the fast path was skipped for that check) — useful for confirming whether a given site is
+  actually reachable via the cheap path from wherever this server is currently deployed, since that
+  can differ from a local test (bot detection can key off more than just IP reputation).
 - Public product pages rarely expose exact stock quantity, except where a platform's Seller/Admin
   API is configured (Flipkart Seller API).
 - **Known blocked sites**: Snapdeal, Nykaa, Tira, Meesho return a 403 (bot protection) from Render's

@@ -48,7 +48,8 @@ const TABS = [
       { index: 3, values: ["Price increase", "Price decrease"] }, // Type
       { index: 5, values: ["in_stock", "low_stock", "out_of_stock", "unknown"] }, // New
     ],
-    urlColumn: 6,
+    // No urlColumn — wrapping the URL made every row several lines tall (bad tradeoff
+    // for a log meant to be skimmed). Left un-wrapped/overflowing, matching Flagged.
   },
 ];
 

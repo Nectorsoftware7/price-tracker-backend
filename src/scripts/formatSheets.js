@@ -51,11 +51,16 @@ const TABS = [
 ];
 
 const MAX_ROWS = 10000;
+// The header fill deliberately reaches past the last real data column (to column Z) —
+// a sheet's grid is wider than its data (25 columns on this spreadsheet), and coloring
+// only the data columns left the header row visibly cut off partway across, with the
+// rest of row 1 showing bare white for the remainder of the viewport.
+const HEADER_FILL_COLUMNS = 26;
 
-function headerFormatRequest(sheetId, columnCount) {
+function headerFormatRequest(sheetId) {
   return {
     repeatCell: {
-      range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: columnCount },
+      range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: HEADER_FILL_COLUMNS },
       cell: {
         userEnteredFormat: {
           backgroundColor: HEADER_BG,
@@ -157,7 +162,7 @@ async function main() {
   for (const tab of TABS) {
     const sheetId = sheetIdByName[tab.name];
     if (sheetId === undefined) continue;
-    requests.push(headerFormatRequest(sheetId, tab.columns));
+    requests.push(headerFormatRequest(sheetId));
     requests.push(bandingRequest(sheetId, tab.columns));
     requests.push(...conditionalFormatRequests(sheetId, tab.columns, tab.colorColumns));
     if (tab.urlColumn != null) requests.push(urlWrapRequest(sheetId, tab.urlColumn));

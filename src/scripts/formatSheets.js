@@ -27,14 +27,17 @@ function hex(h) {
   return { red: ((n >> 16) & 255) / 255, green: ((n >> 8) & 255) / 255, blue: (n & 255) / 255 };
 }
 
-// [tab name, header column count, [ {columnIndex (0-based), values[]} ] for conditional coloring]
+// [tab name, header column count, [ {columnIndex (0-based), values[]} ] for conditional
+// coloring, urlColumn index for text wrapping (a raw URL otherwise renders as one
+// unbroken line that either overflows into neighboring cells or gets clipped)]
 const TABS = [
-  { name: "Log", columns: 4, colorColumns: [] },
-  { name: "Flagged", columns: 7, colorColumns: [{ index: 3, values: ["low_stock", "out_of_stock"] }] }, // Stock
+  { name: "Log", columns: 4, colorColumns: [], urlColumn: 3 }, // Product_Url
+  { name: "Flagged", columns: 7, colorColumns: [{ index: 3, values: ["low_stock", "out_of_stock"] }], urlColumn: 5 }, // Stock; URL
   {
     name: "Price Variation",
     columns: 9,
     colorColumns: [{ index: 6, values: ["in_stock", "low_stock", "out_of_stock", "unknown"] }], // Stock
+    urlColumn: 7,
   },
   {
     name: "Price & Stock Changes",
@@ -43,6 +46,7 @@ const TABS = [
       { index: 3, values: ["Price increase", "Price decrease"] }, // Type
       { index: 5, values: ["in_stock", "low_stock", "out_of_stock", "unknown"] }, // New
     ],
+    urlColumn: 6,
   },
 ];
 
@@ -75,6 +79,16 @@ function bandingRequest(sheetId, columnCount) {
           secondBandColorStyle: { rgbColor: BAND_SECOND },
         },
       },
+    },
+  };
+}
+
+function urlWrapRequest(sheetId, urlColumn) {
+  return {
+    repeatCell: {
+      range: { sheetId, startRowIndex: 1, endRowIndex: MAX_ROWS, startColumnIndex: urlColumn, endColumnIndex: urlColumn + 1 },
+      cell: { userEnteredFormat: { wrapStrategy: "WRAP" } },
+      fields: "userEnteredFormat.wrapStrategy",
     },
   };
 }
@@ -146,6 +160,7 @@ async function main() {
     requests.push(headerFormatRequest(sheetId, tab.columns));
     requests.push(bandingRequest(sheetId, tab.columns));
     requests.push(...conditionalFormatRequests(sheetId, tab.columns, tab.colorColumns));
+    if (tab.urlColumn != null) requests.push(urlWrapRequest(sheetId, tab.urlColumn));
   }
 
   await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });

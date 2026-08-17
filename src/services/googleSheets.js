@@ -95,6 +95,42 @@ async function appendRows(tabName, rows) {
   });
 }
 
+// Like appendRows, but writes newest-first: inserts blank rows right after the header
+// (row 2) and fills them in, pushing everything already there down. Used for logs meant
+// to be read most-recent-on-top, where values.append (always after the last existing
+// row) would put new entries at the bottom instead.
+async function prependRows(tabName, rows) {
+  if (!isConfigured() || rows.length === 0) return;
+  const sheets = getClient();
+  const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+  await ensureTabExists(sheets, spreadsheetId, tabName);
+
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const sheetId = meta.data.sheets.find((s) => s.properties.title === tabName).properties.sheetId;
+
+  // Row index 1 (0-based) = the sheet's row 2, immediately below the header.
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          insertDimension: {
+            range: { sheetId, dimension: "ROWS", startIndex: 1, endIndex: 1 + rows.length },
+            inheritFromBefore: false,
+          },
+        },
+      ],
+    },
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${quoteSheetName(tabName)}!A2`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: rows },
+  });
+}
+
 // Flagged/variation tabs reflect current state, not a running log — clear the tab and
 // rewrite it fresh each run rather than appending forever.
 async function overwriteSheet(tabName, headerRow, rows) {
@@ -112,4 +148,4 @@ async function overwriteSheet(tabName, headerRow, rows) {
   });
 }
 
-module.exports = { isConfigured, appendRows, overwriteSheet, ensureHeader };
+module.exports = { isConfigured, appendRows, prependRows, overwriteSheet, ensureHeader };

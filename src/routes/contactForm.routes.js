@@ -1,11 +1,12 @@
 const express = require("express");
 const requireAuth = require("../middlewares/auth.middleware");
+const { blockViewer } = require("../middlewares/requireRole.middleware");
 const { listSubmissions, manualReply, wordpressWebhook, shopifyProxy, shopifyDirect } = require("../controllers/contactForm.controller");
 
 const router = express.Router();
 
 router.get("/", requireAuth, listSubmissions);
-router.post("/:id/reply", requireAuth, manualReply);
+router.post("/:id/reply", requireAuth, blockViewer, manualReply);
 
 // Public — authenticated by their own shared-secret / HMAC checks, not JWT.
 router.post("/wordpress-webhook", wordpressWebhook);

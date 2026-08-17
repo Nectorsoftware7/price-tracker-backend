@@ -10,4 +10,14 @@ function requireRole(...allowedRoles) {
   };
 }
 
+// Use after requireAuth on any mutating route. "viewer" is a read-only role (given
+// out for demo/review access) — it must still pass requireAuth normally so GET
+// routes work, but every POST/PUT/DELETE route needs this to actually enforce
+// "view only" server-side rather than just hiding the buttons in the UI.
+function blockViewer(req, res, next) {
+  if (req.user?.role === "viewer") return next(new ApiError(403, "This account is view-only"));
+  next();
+}
+
 module.exports = requireRole;
+module.exports.blockViewer = blockViewer;

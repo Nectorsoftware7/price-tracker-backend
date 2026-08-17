@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   username VARCHAR(100) NOT NULL UNIQUE,
   password_hash VARCHAR(255), -- NULL for accounts self-registered via Google sign-in
-  role ENUM('admin', 'superadmin'), -- NULL until a superadmin approves and assigns one
+  role ENUM('admin', 'superadmin', 'viewer'), -- NULL until a superadmin approves and assigns one
   status ENUM('pending', 'approved') NOT NULL DEFAULT 'approved',
   active TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP

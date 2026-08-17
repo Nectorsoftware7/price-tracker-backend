@@ -83,18 +83,25 @@ async function checkPurplleOutOfStockOverride(page) {
   return { isOutOfStock: debug.hasOutOfStockText || (debug.hasNotifyMe && !debug.hasAddToCart), debug: { idleResult, ...debug } };
 }
 
-// Sites that treat our (Render datacenter) IP differently from a normal residential
-// visitor — either outright blocking it (Tira/Nykaa return 403 even to a plain curl,
-// Meesho similarly), silently serving stale/cached content only to it (Purplle kept
-// returning an identical, hours-old "in stock" snapshot regardless of cache-busting
-// headers/query params — see checkPurplleOutOfStockOverride's debug logging), or
-// server-side geo-IP gating the price section entirely for a non-Indian-resolving IP
-// (JioMart — confirmed the location cookie fix alone had zero effect on Render, so
-// this is decided before any client-side JS runs, not fixable without changing what
-// IP the request comes from). Routing just these through a residential (Indian) proxy
-// makes the request look like an ordinary home visitor instead of reworking detection
-// per-site.
-const PROXY_SITES = ["tira.co", "nykaa.com", "meesho.com", "purplle.com", "snapdeal.com", "jiomart.com"];
+// Sites confirmed to need help getting past their own bot-detection, from the *browser*
+// (not the no-browser fast path, which is what actually gets blocked by IP reputation
+// on most of these — a real Playwright+stealth request usually gets through fine):
+//   - Purplle: silently serves stale/cached content to a plain request (see
+//     checkPurplleOutOfStockOverride's debug logging) — ScraperAPI's own IP pool avoids it.
+//   - JioMart: gates the price section server-side behind geo-IP for a non-Indian-
+//     resolving IP (the location cookie alone had zero effect on Render).
+//   - Meesho: blocks outright at every level tried so far — plain fetch (403), and even
+//     a full stealth Playwright browser gets served an inert bot-challenge page (empty
+//     render, no product data at all). Only site here still needing ScraperAPI's paid
+//     premium tier (or the local-worker fallback) to have a chance.
+//
+// Tira, Nykaa and Snapdeal were on this list too, routing them through ScraperAPI's
+// premium tier — which the account doesn't have, so it just failed outright — when a
+// plain stealth Playwright request (no proxy, no ScraperAPI) already gets real data
+// from all three (confirmed live against production for Tira: ₹2700, in_stock, via
+// json-ld). Keep re-verifying this if one starts failing again — bot detection changes
+// over time (this is exactly how Snapdeal ended up here originally).
+const PROXY_SITES = ["meesho.com", "purplle.com", "jiomart.com"];
 
 function getProxyConfig(url) {
   if (!process.env.PROXY_SERVER) return undefined;
@@ -181,13 +188,10 @@ async function getPriceWithBrowserUnqueued(url, priceSelector, stockSelector) {
     // *how the HTML got into the page* differs for these sites.
     const useScraperApi = process.env.SCRAPERAPI_KEY && PROXY_SITES.some((host) => url.includes(host));
     if (useScraperApi) {
-      // Snapdeal's CloudFront protection rejected a plain render=true request outright
-      // ("Protected domains may require adding premium=true") — the other sites in this
-      // heavier-protection bracket (Nykaa/Tira/Meesho, all previously seen returning a
-      // 403 rather than degraded/stale content like Purplle/JioMart did) get the same
-      // premium routing pre-emptively. JioMart/Purplle already succeeded on the cheaper
-      // plain render=true, so they're left off this list to not burn extra credits.
-      const needsPremium = ["snapdeal.com", "nykaa.com", "tira.co", "meesho.com"].some((host) => url.includes(host));
+      // Meesho is the one site in PROXY_SITES that's still failing on the cheap
+      // plain render=true tier, so it's the only one worth spending premium credits on.
+      // JioMart/Purplle already succeed on plain render=true.
+      const needsPremium = ["meesho.com"].some((host) => url.includes(host));
       const apiUrl = `https://api.scraperapi.com/?api_key=${process.env.SCRAPERAPI_KEY}&url=${encodeURIComponent(url)}&render=true${needsPremium ? "&premium=true" : ""}`;
       const res = await fetch(apiUrl);
       if (!res.ok) throw new Error(`ScraperAPI request failed: ${res.status} ${res.statusText}`);

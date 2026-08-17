@@ -154,7 +154,13 @@ const reportCheck = asyncHandler(async (req, res) => {
     throw new ApiError(401, "Invalid or missing worker secret");
   }
   const { price, stock, stockDetail } = req.body;
-  if (typeof price !== "number" || isNaN(price)) throw new ApiError(400, "price (number) is required");
+  // A genuinely out-of-stock/unavailable listing (e.g. JioMart's "Currently
+  // unavailable" state) legitimately has no price anywhere on the page — the same rule
+  // checkOneProduct applies to its own scrapes applies here too, otherwise a worker
+  // reporting a real out-of-stock reading gets rejected outright.
+  if (stock !== "out_of_stock" && (typeof price !== "number" || isNaN(price))) {
+    throw new ApiError(400, "price (number) is required unless stock is out_of_stock");
+  }
   const product = await reportCheckResult(req.params.id, { price, stock, stockDetail });
   res.json(product);
 });

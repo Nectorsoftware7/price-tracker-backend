@@ -9,6 +9,7 @@ const {
   getHistory,
   getAllStats,
   getStockEvents,
+  getAllStockEvents,
   checkAll,
   reportCheck,
   checkNow,
@@ -22,6 +23,7 @@ router.post("/bulk-import", requireAuth, bulkImportProducts);
 router.put("/:id", requireAuth, updateProduct);
 router.delete("/:id", requireAuth, deleteProduct);
 router.get("/stats", requireAuth, getAllStats);
+router.get("/stock-events", requireAuth, getAllStockEvents);
 router.get("/:id/history", requireAuth, getHistory);
 router.get("/:id/stock-events", requireAuth, getStockEvents);
 router.post("/check-all", requireAuth, checkAll);

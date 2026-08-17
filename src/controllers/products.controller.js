@@ -137,6 +137,10 @@ const getStockEvents = asyncHandler(async (req, res) => {
   res.json(await StockEvent.findByProduct(req.params.id, 50));
 });
 
+const getAllStockEvents = asyncHandler(async (req, res) => {
+  res.json(await StockEvent.findRecent(100));
+});
+
 // Manually trigger the same check the hourly cron runs, for all active products at once
 // (the cloud-scrapeable sites only — see PRICE_CHECK_SKIP_SITES)
 const checkAll = asyncHandler(async (req, res) => {
@@ -180,6 +184,7 @@ module.exports = {
   getHistory,
   getAllStats,
   getStockEvents,
+  getAllStockEvents,
   checkAll,
   reportCheck,
   checkNow,

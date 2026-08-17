@@ -86,10 +86,10 @@ async function checkPurplleOutOfStockOverride(page) {
 // Sites confirmed to need help getting past their own bot-detection, from the *browser*
 // (not the no-browser fast path, which is what actually gets blocked by IP reputation
 // on most of these — a real Playwright+stealth request usually gets through fine):
-//   - Purplle: silently serves stale/cached content to a plain request (see
-//     checkPurplleOutOfStockOverride's debug logging) — ScraperAPI's own IP pool avoids it.
 //   - JioMart: gates the price section server-side behind geo-IP for a non-Indian-
-//     resolving IP (the location cookie alone had zero effect on Render).
+//     resolving IP (the location cookie alone had zero effect on Render) — a direct
+//     request doesn't error, it renders a convincing-looking but false "Currently
+//     unavailable" for every product, worse than an outright failure.
 //   - Meesho: blocks outright at every level tried so far — plain fetch (403), and even
 //     a full stealth Playwright browser gets served an inert bot-challenge page (empty
 //     render, no product data at all). Only site here still needing ScraperAPI's paid
@@ -101,7 +101,17 @@ async function checkPurplleOutOfStockOverride(page) {
 // from all three (confirmed live against production for Tira: ₹2700, in_stock, via
 // json-ld). Keep re-verifying this if one starts failing again — bot detection changes
 // over time (this is exactly how Snapdeal ended up here originally).
-const PROXY_SITES = ["meesho.com", "purplle.com", "jiomart.com"];
+//
+// Purplle was here too, until ScraperAPI's trial ran out (5,005/5,000 credits, expiring
+// in 2 days) broke it along with JioMart. Unlike JioMart, a direct request DOES get
+// genuinely usable data back (confirmed: ₹249/out_of_stock, matching the last known-good
+// reading) — it's just the one with a documented history of occasionally serving stale
+// cached content (see checkPurplleOutOfStockOverride's debug logging and the
+// cache-busting query param below), which is why it was routed through ScraperAPI's
+// separate IP pool in the first place. Worth re-adding here if stale/false "back in
+// stock" readings start showing up again — the override logic alone wasn't sufficient
+// last time this was tried without a proxy.
+const PROXY_SITES = ["meesho.com", "jiomart.com"];
 
 function getProxyConfig(url) {
   if (!process.env.PROXY_SERVER) return undefined;

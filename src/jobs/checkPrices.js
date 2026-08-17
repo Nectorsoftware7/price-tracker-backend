@@ -219,10 +219,6 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
   // when it went out or came back). This appends one row per actual event, immediately,
   // as the Telegram alert for it fires — a real timestamped history, not a snapshot.
   if (priceChanged || stockChanged) {
-    // Price sits right after Old/New (URL trails last) — a one-time migration
-    // (scripts/migrateChangesSheetAddPrice.js) rewrote every pre-existing row into this
-    // same column order first, so this isn't appending onto a mismatched sheet.
-    const currentPrice = newPrice != null ? `₹${newPrice}` : "";
     const changeRows = [];
     if (priceChanged) {
       changeRows.push([
@@ -232,19 +228,15 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
         newPrice > oldPrice ? "Price increase" : "Price decrease",
         `₹${oldPrice}`,
         `₹${newPrice}`,
-        currentPrice,
         product.url,
       ]);
     }
     if (newStock && newStock !== oldStock) {
-      // e.g. an "unknown -> in_stock" row previously only showed the status flipped,
-      // with no way to tell what it came back in stock *at* without opening the
-      // dashboard separately.
-      changeRows.push([checkedAt, product.name, product.site, "Stock change", oldStock || "unknown", newStock, currentPrice, product.url]);
+      changeRows.push([checkedAt, product.name, product.site, "Stock change", oldStock || "unknown", newStock, product.url]);
     }
     const changesTab = process.env.GOOGLE_SHEETS_CHANGES_TAB || "Price & Stock Changes";
     await googleSheets
-      .ensureHeader(changesTab, ["Timestamp", "Name", "Site", "Type", "Old", "New", "Price", "URL"])
+      .ensureHeader(changesTab, ["Timestamp", "Name", "Site", "Type", "Old", "New", "URL"])
       .then(() => googleSheets.appendRows(changesTab, changeRows))
       .catch((err) => console.error("Google Sheets change-log append failed:", err.message));
   }

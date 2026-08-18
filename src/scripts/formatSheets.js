@@ -34,7 +34,9 @@ function hex(h) {
 // urlColumn is only set on "Price & Stock Changes" — by request, kept to that one tab
 // rather than every tab that has a URL column.
 const TABS = [
-  { name: "Log", columns: 4, colorColumns: [] },
+  // Timestamp, ID, Product_Name, Site_Name, Product_Url — 5 since the Timestamp column
+  // was added; the banding has to span it too or the new column reads as unstyled.
+  { name: "Log", columns: 5, colorColumns: [] },
   { name: "Flagged", columns: 7, colorColumns: [{ index: 3, values: ["low_stock", "out_of_stock"] }] }, // Stock
   {
     name: "Price Variation",

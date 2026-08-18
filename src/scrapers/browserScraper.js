@@ -203,13 +203,82 @@ async function getPriceWithBrowserUnqueued(url, priceSelector, stockSelector) {
       // JioMart/Purplle already succeed on plain render=true.
       const needsPremium = ["meesho.com"].some((host) => url.includes(host));
       const apiUrl = `https://api.scraperapi.com/?api_key=${process.env.SCRAPERAPI_KEY}&url=${encodeURIComponent(url)}&render=true${needsPremium ? "&premium=true" : ""}`;
-      const res = await fetch(apiUrl);
-      if (!res.ok) throw new Error(`ScraperAPI request failed: ${res.status} ${res.statusText}`);
-      const html = await res.text();
+
+      // ScraperAPI intermittently answers 500 ("Request failed. You will not be charged
+      // for this request") when its own proxy attempt fails — observed on ~1 in 3 JioMart
+      // calls, with an immediate retry succeeding. Since failures aren't billed, retrying
+      // costs nothing but turns a flaky-looking site into a reliable one.
+      let html = null;
+      let lastError = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const res = await fetch(apiUrl);
+        if (res.ok) {
+          html = await res.text();
+          break;
+        }
+        lastError = `${res.status} ${res.statusText}`;
+        if (res.status !== 500) break; // 401/403 etc. are real, not worth retrying
+      }
+      if (html === null) throw new Error(`ScraperAPI request failed: ${lastError}`);
       await page.setContent(html, { waitUntil: "domcontentloaded" });
     } else {
       const gotoUrl = isPurplle ? `${url}${url.includes("?") ? "&" : "?"}_cb=${Date.now()}` : url;
       await page.goto(gotoUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+    }
+
+    // JioMart's JSON-LD block carries no `offers` at all (name/description/images only —
+    // confirmed on a live page), and the visible price never renders for a session
+    // without a delivery location. But the page ships its full catalog record as a JS
+    // literal in `window.APP_DATA`. It has to be read via page.evaluate rather than
+    // parsed out of the raw HTML: the blob contains JS-only values and is not valid JSON.
+    //
+    // Shape: product_details.attributes.attributes is itself a JSON *string* holding
+    // variants.stock[] — one entry per seller/pack, each with its own offer_price and an
+    // inventory[] of per-warehouse quantities.
+    if (url.includes("jiomart.com")) {
+      const jm = await page.evaluate(() => {
+        const raw = window.APP_DATA?.reduxData?.catalog?.product_details?.attributes?.attributes;
+        if (typeof raw !== "string") return null;
+        let parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          return null;
+        }
+        const stock = parsed?.variants?.stock;
+        if (!Array.isArray(stock) || stock.length === 0) return null;
+
+        const entries = stock
+          .map((s) => ({
+            price: parseFloat(s?.offer_price?.value ?? s?.base_price?.value),
+            quantity: (Array.isArray(s?.inventory) ? s.inventory : []).reduce(
+              (sum, inv) => sum + (Number(inv?.quantity) || 0),
+              0
+            ),
+          }))
+          .filter((e) => !isNaN(e.price));
+        if (entries.length === 0) return null;
+
+        // The recorded price should be what a customer would actually pay, so prefer a
+        // seller that can actually ship. When nothing is in stock, fall back to the
+        // cheapest listed price so the figure stays meaningful rather than going null.
+        const sellable = entries.filter((e) => e.quantity > 0);
+        const pool = sellable.length ? sellable : entries;
+        const chosen = pool.reduce((a, b) => (a.price <= b.price ? a : b));
+        return { price: chosen.price, inStock: sellable.length > 0, quantity: chosen.quantity };
+      });
+
+      if (jm) {
+        const status = jm.inStock ? "in_stock" : "out_of_stock";
+        return {
+          price: jm.price,
+          stock: status,
+          stockDetail: { status, raw: `JioMart APP_DATA (qty ${jm.quantity})`, quantity: jm.quantity },
+          source: "jiomart-appdata",
+        };
+      }
+      // Nothing usable in APP_DATA — fall through to the generic chain below rather than
+      // failing outright, so a page that *does* still carry JSON-LD keeps working.
     }
 
     // Myntra never publishes a schema.org offers block or __NEXT_DATA__ — its price/

@@ -154,10 +154,19 @@ async function getPriceWithBrowserUnqueued(url, priceSelector, stockSelector) {
     // "works locally, flaky/crashes in a Docker container" Playwright symptom.
     args: ["--disable-dev-shm-usage", "--disable-gpu"],
   });
+  const useScraperApi = Boolean(process.env.SCRAPERAPI_KEY) && PROXY_SITES.some((host) => url.includes(host));
   try {
     const page = await browser.newPage({
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+      // HTML that came from ScraperAPI is *already* fully rendered, so the page's own
+      // scripts have nothing left to contribute — and letting them run actively destroys
+      // the result: JioMart's React app re-hydrates over the server-rendered markup and,
+      // finding no delivery location in this fresh context, replaces the real price block
+      // with its "Enable location / Enter pin code" prompt. The price is right there in
+      // the HTML we were handed, then wiped before any selector can read it. Loading it
+      // with scripting off keeps the markup exactly as ScraperAPI resolved it.
+      javaScriptEnabled: !useScraperApi,
     });
 
     // Purplle's CDN serves stale cached copies of the product page — debug logging
@@ -196,7 +205,6 @@ async function getPriceWithBrowserUnqueued(url, priceSelector, stockSelector) {
     // into the page via setContent (instead of goto) means every extraction function
     // below (JSON-LD, __NEXT_DATA__, CSS selector) works completely unchanged — only
     // *how the HTML got into the page* differs for these sites.
-    const useScraperApi = process.env.SCRAPERAPI_KEY && PROXY_SITES.some((host) => url.includes(host));
     if (useScraperApi) {
       // Meesho is the one site in PROXY_SITES that's still failing on the cheap
       // plain render=true tier, so it's the only one worth spending premium credits on.
@@ -224,61 +232,6 @@ async function getPriceWithBrowserUnqueued(url, priceSelector, stockSelector) {
     } else {
       const gotoUrl = isPurplle ? `${url}${url.includes("?") ? "&" : "?"}_cb=${Date.now()}` : url;
       await page.goto(gotoUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-    }
-
-    // JioMart's JSON-LD block carries no `offers` at all (name/description/images only —
-    // confirmed on a live page), and the visible price never renders for a session
-    // without a delivery location. But the page ships its full catalog record as a JS
-    // literal in `window.APP_DATA`. It has to be read via page.evaluate rather than
-    // parsed out of the raw HTML: the blob contains JS-only values and is not valid JSON.
-    //
-    // Shape: product_details.attributes.attributes is itself a JSON *string* holding
-    // variants.stock[] — one entry per seller/pack, each with its own offer_price and an
-    // inventory[] of per-warehouse quantities.
-    if (url.includes("jiomart.com")) {
-      const jm = await page.evaluate(() => {
-        const raw = window.APP_DATA?.reduxData?.catalog?.product_details?.attributes?.attributes;
-        if (typeof raw !== "string") return null;
-        let parsed;
-        try {
-          parsed = JSON.parse(raw);
-        } catch {
-          return null;
-        }
-        const stock = parsed?.variants?.stock;
-        if (!Array.isArray(stock) || stock.length === 0) return null;
-
-        const entries = stock
-          .map((s) => ({
-            price: parseFloat(s?.offer_price?.value ?? s?.base_price?.value),
-            quantity: (Array.isArray(s?.inventory) ? s.inventory : []).reduce(
-              (sum, inv) => sum + (Number(inv?.quantity) || 0),
-              0
-            ),
-          }))
-          .filter((e) => !isNaN(e.price));
-        if (entries.length === 0) return null;
-
-        // The recorded price should be what a customer would actually pay, so prefer a
-        // seller that can actually ship. When nothing is in stock, fall back to the
-        // cheapest listed price so the figure stays meaningful rather than going null.
-        const sellable = entries.filter((e) => e.quantity > 0);
-        const pool = sellable.length ? sellable : entries;
-        const chosen = pool.reduce((a, b) => (a.price <= b.price ? a : b));
-        return { price: chosen.price, inStock: sellable.length > 0, quantity: chosen.quantity };
-      });
-
-      if (jm) {
-        const status = jm.inStock ? "in_stock" : "out_of_stock";
-        return {
-          price: jm.price,
-          stock: status,
-          stockDetail: { status, raw: `JioMart APP_DATA (qty ${jm.quantity})`, quantity: jm.quantity },
-          source: "jiomart-appdata",
-        };
-      }
-      // Nothing usable in APP_DATA — fall through to the generic chain below rather than
-      // failing outright, so a page that *does* still carry JSON-LD keeps working.
     }
 
     // Myntra never publishes a schema.org offers block or __NEXT_DATA__ — its price/

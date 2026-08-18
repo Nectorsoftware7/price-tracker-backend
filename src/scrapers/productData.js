@@ -103,10 +103,72 @@ function nextDataTextFromHtml(html) {
   return match ? match[1] : null;
 }
 
+// Myntra embeds the entire product-detail payload as a single inline
+// `window.__myx = {...}` assignment rather than a <script id="..."> block — often as
+// one very long line — so a regex can't safely find the matching closing brace (a
+// non-greedy `.*?}` stops at the first `}` inside the JSON, which is almost always
+// mid-object). This does an actual brace-depth scan, skipping over string contents
+// (including escaped quotes) so a literal "}" inside a product description can't
+// miscount.
+function extractBalancedJson(text, marker) {
+  const start = text.indexOf(marker);
+  if (start === -1) return null;
+  const braceStart = text.indexOf("{", start);
+  if (braceStart === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = braceStart; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return text.slice(braceStart, i + 1);
+    }
+  }
+  return null; // truncated/malformed — never guess
+}
+
+// pdpData.price gives {mrp, discounted} directly (no schema.org JSON-LD offers block
+// to fall back on for Myntra), and pdpData.sizes[] carries one entry per buyable
+// variant with its own `available` flag — a product is in stock if *any* size is.
+function pickPriceFromMyntraText(html) {
+  const jsonText = extractBalancedJson(html, "window.__myx");
+  if (!jsonText) return null;
+
+  let data;
+  try {
+    data = JSON.parse(jsonText);
+  } catch {
+    return null;
+  }
+
+  const pdp = data && data.pdpData;
+  if (!pdp || !pdp.price) return null;
+
+  const price = Number(pdp.price.discounted ?? pdp.price.mrp);
+  if (isNaN(price)) return null;
+
+  const sizes = Array.isArray(pdp.sizes) ? pdp.sizes : [];
+  if (sizes.length === 0) return null; // no size data — don't guess in/out of stock
+
+  const inStock = sizes.some((s) => s.available);
+  return { price, stock: inStock ? "in_stock" : "out_of_stock" };
+}
+
 module.exports = {
   availabilityUrlToStatus,
   pickPriceFromJsonLdTexts,
   pickPriceFromNextDataText,
   jsonLdTextsFromHtml,
   nextDataTextFromHtml,
+  pickPriceFromMyntraText,
 };

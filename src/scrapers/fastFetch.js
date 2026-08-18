@@ -8,6 +8,7 @@ const {
   pickPriceFromNextDataText,
   jsonLdTextsFromHtml,
   nextDataTextFromHtml,
+  pickPriceFromMyntraText,
 } = require("./productData");
 
 // A no-browser fetch path, tried before launching Chromium.
@@ -133,6 +134,23 @@ async function getPriceWithFetch(url) {
   if (FAST_FETCH_BLOCKLIST.some((host) => url.includes(host))) return null;
 
   const html = await requestOnce(url, MAX_REDIRECTS);
+
+  // Myntra never publishes a schema.org offers block — its price/stock only exist in
+  // the page's own `window.__myx` payload — so this is checked directly rather than
+  // falling through the generic JSON-LD/__NEXT_DATA__ paths below, which would just
+  // find nothing and return null.
+  if (url.includes("myntra.com")) {
+    const myntra = pickPriceFromMyntraText(html);
+    if (myntra) {
+      return {
+        price: myntra.price,
+        stock: myntra.stock,
+        stockDetail: { status: myntra.stock, raw: null, quantity: null },
+        source: "myntra-fetch",
+      };
+    }
+    return null;
+  }
 
   const jsonLd = pickPriceFromJsonLdTexts(jsonLdTextsFromHtml(html));
   if (jsonLd) {

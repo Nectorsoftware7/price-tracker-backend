@@ -104,10 +104,13 @@ async function fetchProduct(product) {
     case "nykaa":
     case "snapdeal":
     case "purplle":
+    case "myntra":
       // No site-specific handling yet — relies on the generic JSON-LD /
       // __NEXT_DATA__ / CSS-selector fallback chain in getPriceWithBrowser.
       // If a site doesn't expose JSON-LD, priceSelector/stockSelector must be
-      // supplied per-product (same as any other custom site).
+      // supplied per-product (same as any other custom site). Myntra itself is
+      // handled earlier in that chain — fastFetch reads its window.__myx payload
+      // directly — so this case rarely falls through to an actual browser launch.
       return fetchViaFastPathOrBrowser(product.url, priceSelector, stockSelector);
     default:
       throw new Error(`Unknown site type: ${product.site}`);

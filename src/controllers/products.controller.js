@@ -30,7 +30,7 @@ const createProduct = asyncHandler(async (req, res) => {
 // Matches the frontend's <select> options (Products.jsx) — a bulk-imported "Platform"
 // column value (e.g. "Flipkart", pasted straight out of a spreadsheet) needs mapping
 // onto these exact internal site keys.
-const KNOWN_SITES = ["shopify", "woocommerce", "flipkart", "meesho", "jiomart", "tira", "nykaa", "snapdeal", "purplle"];
+const KNOWN_SITES = ["shopify", "woocommerce", "flipkart", "meesho", "jiomart", "tira", "nykaa", "snapdeal", "purplle", "myntra"];
 
 // Bulk-add many products at once (e.g. pasted straight from a spreadsheet) instead of
 // one-by-one through the form. Intentionally does NOT scrape each one immediately —

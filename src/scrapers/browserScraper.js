@@ -5,6 +5,7 @@ const {
   availabilityUrlToStatus,
   pickPriceFromJsonLdTexts,
   pickPriceFromNextDataText,
+  pickPriceFromMyntraText,
 } = require("./productData");
 
 // Plain Playwright is trivially fingerprintable as a bot regardless of IP reputation —
@@ -155,6 +156,10 @@ async function getPriceWithBrowserUnqueued(url, priceSelector, stockSelector) {
     args: ["--disable-dev-shm-usage", "--disable-gpu"],
   });
   const useScraperApi = Boolean(process.env.SCRAPERAPI_KEY) && PROXY_SITES.some((host) => url.includes(host));
+  // Kept around after loading so extractors that need the raw markup (rather than the
+  // DOM) can reuse it — with scripting disabled for these pages, anything that lived in
+  // a `window.*` global only exists in this string.
+  let scraperApiHtml = null;
   try {
     const page = await browser.newPage({
       userAgent:
@@ -216,35 +221,64 @@ async function getPriceWithBrowserUnqueued(url, priceSelector, stockSelector) {
       // for this request") when its own proxy attempt fails — observed on ~1 in 3 JioMart
       // calls, with an immediate retry succeeding. Since failures aren't billed, retrying
       // costs nothing but turns a flaky-looking site into a reliable one.
-      let html = null;
+      let loaded = false;
       let lastError = null;
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      for (let attempt = 1; attempt <= 4; attempt++) {
         const res = await fetch(apiUrl);
-        if (res.ok) {
-          html = await res.text();
+        if (!res.ok) {
+          lastError = `${res.status} ${res.statusText}`;
+          if (res.status !== 500) break; // 401/403 etc. are real, not worth retrying
+          continue;
+        }
+        scraperApiHtml = await res.text();
+        await page.setContent(scraperApiHtml, { waitUntil: "domcontentloaded" });
+
+        // Every ScraperAPI call resolves through a different proxy IP, and JioMart only
+        // renders its price block for a session it can geolocate to India — so a
+        // perfectly valid 200 sometimes comes back showing the "Enter pin code" prompt
+        // where the product should be. That is indistinguishable from a real failure to
+        // any selector, and silently recording it would mean a false out-of-stock, so
+        // retry on a fresh IP instead of accepting the page.
+        if (!priceSelector || (await page.$(priceSelector))) {
+          loaded = true;
           break;
         }
-        lastError = `${res.status} ${res.statusText}`;
-        if (res.status !== 500) break; // 401/403 etc. are real, not worth retrying
+        lastError = "rendered page had no price block (location prompt)";
       }
-      if (html === null) throw new Error(`ScraperAPI request failed: ${lastError}`);
-      await page.setContent(html, { waitUntil: "domcontentloaded" });
+      if (!loaded) throw new Error(`ScraperAPI request failed: ${lastError}`);
     } else {
       const gotoUrl = isPurplle ? `${url}${url.includes("?") ? "&" : "?"}_cb=${Date.now()}` : url;
       await page.goto(gotoUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
     }
 
     // Myntra never publishes a schema.org offers block or __NEXT_DATA__ — its price/
-    // stock live only in the page's own `window.__myx` global. It's already a real JS
-    // object in the loaded page (however the HTML got here — goto or setContent), so
-    // this reads it directly rather than re-parsing the raw HTML a second time.
+    // stock live only in the page's own `window.__myx` global.
+    //
+    // When the HTML came from ScraperAPI, scripting is off (see javaScriptEnabled
+    // above), so that global was never assigned and page.evaluate would find nothing —
+    // the same raw-HTML parser fastFetch uses is applied to the fetched string instead.
+    // Only a page we navigated to ourselves has a live __myx object to read.
     if (url.includes("myntra.com")) {
-      const myx = await page.evaluate(() => window.__myx || null);
-      const pdp = myx && myx.pdpData;
-      const price = pdp && pdp.price ? Number(pdp.price.discounted ?? pdp.price.mrp) : NaN;
-      const sizes = pdp && Array.isArray(pdp.sizes) ? pdp.sizes : [];
-      if (!isNaN(price) && sizes.length > 0) {
-        const status = sizes.some((s) => s.available) ? "in_stock" : "out_of_stock";
+      let price = NaN;
+      let inStock = null;
+
+      if (scraperApiHtml) {
+        const parsed = pickPriceFromMyntraText(scraperApiHtml);
+        if (parsed) {
+          price = parsed.price;
+          inStock = parsed.stock === "in_stock";
+        }
+      } else {
+        const myx = await page.evaluate(() => window.__myx || null);
+        const pdp = myx && myx.pdpData;
+        if (pdp && pdp.price && Array.isArray(pdp.sizes) && pdp.sizes.length > 0) {
+          price = Number(pdp.price.discounted ?? pdp.price.mrp);
+          inStock = pdp.sizes.some((s) => s.available);
+        }
+      }
+
+      if (!isNaN(price) && inStock !== null) {
+        const status = inStock ? "in_stock" : "out_of_stock";
         return {
           price,
           stock: status,

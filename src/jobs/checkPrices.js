@@ -323,7 +323,9 @@ async function checkOneProduct(product, { manual = false } = {}) {
     };
   } catch (err) {
     console.error(`Failed to check "${product.name}":`, err.message);
-    return { name: product.name, ok: false, error: err.message };
+    // Carries site/url like the success shape does — the same product name exists on
+    // several platforms here, so a failure listing just the name can't be acted on.
+    return { id: product._id, name: product.name, site: product.site, url: product.url, ok: false, error: err.message };
   }
 }
 
@@ -355,9 +357,24 @@ async function runPriceCheck({ skipSites = [] } = {}) {
   // matter — and the run-health signal it existed for (has the cron fired at all?) is
   // still visible on the dashboard's "last checked" timestamps.
   if (failed.length) {
+    // One line per failure with its platform and the reason, rather than a comma-joined
+    // list of names — the reason is what decides whether anything needs doing (a
+    // transient proxy 500 is noise; "no price block" or a 404 is a real problem), and
+    // the name alone is ambiguous when the same product is tracked on several sites.
+    const lines = failed
+      .slice(0, 15)
+      .map((f) => `• <b>${f.name}</b> <i>(${f.site})</i>\n   ↳ ${String(f.error).slice(0, 90)}`)
+      .join("\n");
+    const more = failed.length > 15 ? `\n…and ${failed.length - 15} more` : "";
+
     await sendTelegramMessage(
-      `⚠️ Hourly check — ${failed.length} failed\n\n${results.length - failed.length}/${results.length} checked, ${changed.length} changed\n` +
-        `Failed: ${failed.map((f) => f.name).join(", ")}\n🕐 ${checkedAt}`
+      `⚠️ <b>Hourly check — ${failed.length} failed</b>\n` +
+        `━━━━━━━━━━━━━━━\n` +
+        `✅ Checked: ${results.length - failed.length}/${results.length}\n` +
+        `🔄 Changed: ${changed.length}\n` +
+        `❌ Failed: ${failed.length}\n\n` +
+        `${lines}${more}\n\n` +
+        `🕐 ${checkedAt}`
     );
   }
 

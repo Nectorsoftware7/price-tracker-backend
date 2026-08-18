@@ -112,7 +112,7 @@ async function checkPurplleOutOfStockOverride(page) {
 // separate IP pool in the first place. Worth re-adding here if stale/false "back in
 // stock" readings start showing up again — the override logic alone wasn't sufficient
 // last time this was tried without a proxy.
-const PROXY_SITES = ["meesho.com", "jiomart.com", "myntra.com"];
+const PROXY_SITES = ["meesho.com", "jiomart.com", "myntra.com", "snapdeal.com"];
 
 function getProxyConfig(url) {
   if (!process.env.PROXY_SERVER) return undefined;
@@ -215,7 +215,13 @@ async function getPriceWithBrowserUnqueued(url, priceSelector, stockSelector) {
       // plain render=true tier, so it's the only one worth spending premium credits on.
       // JioMart/Purplle already succeed on plain render=true.
       const needsPremium = ["meesho.com"].some((host) => url.includes(host));
-      const apiUrl = `https://api.scraperapi.com/?api_key=${process.env.SCRAPERAPI_KEY}&url=${encodeURIComponent(url)}&render=true${needsPremium ? "&premium=true" : ""}`;
+      // Every site routed through here is an Indian marketplace that treats a foreign IP
+      // as untrusted — Snapdeal answers a CloudFront 403 outright, and JioMart quietly
+      // serves its "Enter pin code" prompt in place of the price block. ScraperAPI's pool
+      // is worldwide by default, which is why results looked random: a run succeeded or
+      // failed purely on where that request's exit IP happened to be. Pinning the exit
+      // country makes it deterministic.
+      const apiUrl = `https://api.scraperapi.com/?api_key=${process.env.SCRAPERAPI_KEY}&url=${encodeURIComponent(url)}&render=true&country_code=in${needsPremium ? "&premium=true" : ""}`;
 
       // ScraperAPI intermittently answers 500 ("Request failed. You will not be charged
       // for this request") when its own proxy attempt fails — observed on ~1 in 3 JioMart

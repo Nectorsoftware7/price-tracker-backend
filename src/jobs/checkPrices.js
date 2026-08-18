@@ -393,9 +393,16 @@ async function syncGoogleSheets() {
   // toggled off) shouldn't linger in these snapshot tabs.
   const allProducts = (await Product.findAll()).filter((p) => p.active);
 
+  // Leads with when the product was added, matching the Price & Stock Changes tab's
+  // layout — findAll() already returns newest-first, so the tab reads as a dated list of
+  // what was added when, rather than an unordered inventory.
   const logTab = process.env.GOOGLE_SHEETS_LOG_TAB || "Log";
-  const logRows = allProducts.map((p) => [p._id, p.name, p.site, p.url]);
-  await googleSheets.overwriteSheet(logTab, ["ID", "Product_Name", "Site_Name", "Product_Url"], logRows);
+  const logRows = allProducts.map((p) => [formatIst(p.createdAt), p._id, p.name, p.site, p.url]);
+  await googleSheets.overwriteSheet(
+    logTab,
+    ["Timestamp", "ID", "Product_Name", "Site_Name", "Product_Url"],
+    logRows
+  );
 
   const formatCheckedAt = (p) =>
     p.lastCheckedAt

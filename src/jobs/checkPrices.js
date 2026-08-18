@@ -6,6 +6,7 @@ const { getWooCommerceProduct } = require("../scrapers/woocommerce");
 const { getPriceWithBrowser } = require("../scrapers/browserScraper");
 const { getPriceWithFetch } = require("../scrapers/fastFetch");
 const { sendTelegramMessage } = require("../services/telegram");
+const { formatIst } = require("../utils/formatIst");
 const { getExactStockQuantity: getFlipkartExactStock } = require("../services/flipkartAdmin");
 const googleSheets = require("../services/googleSheets");
 
@@ -176,7 +177,7 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
     await PricePoint.create(product._id, newPrice);
   }
 
-  const checkedAt = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+  const checkedAt = formatIst();
 
   if (oldPrice != null && newPrice !== oldPrice) {
     const direction = newPrice > oldPrice ? "📈 Price increased" : "📉 Price decreased";
@@ -348,7 +349,7 @@ async function runPriceCheck({ skipSites = [] } = {}) {
   }
   await syncGoogleSheets().catch((err) => console.error("Google Sheets sync failed:", err.message));
 
-  const checkedAt = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+  const checkedAt = formatIst();
   const failed = results.filter((r) => !r.ok);
   const changed = results.filter((r) => r.ok && r.changed);
 
@@ -398,7 +399,7 @@ async function syncGoogleSheets() {
 
   const formatCheckedAt = (p) =>
     p.lastCheckedAt
-      ? new Date(p.lastCheckedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })
+      ? formatIst(p.lastCheckedAt)
       : "";
 
   const flaggedRows = allProducts
@@ -451,7 +452,7 @@ async function checkOneProductById(id) {
   // though — send a confirmation for the "nothing changed" case too, so clicking it
   // always gives visible feedback on Telegram instead of silence.
   if (result.ok && !result.changed) {
-    const checkedAt = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+    const checkedAt = formatIst();
     await sendTelegramMessage(
       `🔍 Manual check — no change\n\n<b>${result.name}</b>\nPrice: ₹${result.price}\nStock: ${result.stock}\n🕐 ${checkedAt}`
     );

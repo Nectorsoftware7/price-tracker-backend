@@ -212,6 +212,27 @@ async function getPriceWithBrowserUnqueued(url, priceSelector, stockSelector) {
       await page.goto(gotoUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
     }
 
+    // Myntra never publishes a schema.org offers block or __NEXT_DATA__ — its price/
+    // stock live only in the page's own `window.__myx` global. It's already a real JS
+    // object in the loaded page (however the HTML got here — goto or setContent), so
+    // this reads it directly rather than re-parsing the raw HTML a second time.
+    if (url.includes("myntra.com")) {
+      const myx = await page.evaluate(() => window.__myx || null);
+      const pdp = myx && myx.pdpData;
+      const price = pdp && pdp.price ? Number(pdp.price.discounted ?? pdp.price.mrp) : NaN;
+      const sizes = pdp && Array.isArray(pdp.sizes) ? pdp.sizes : [];
+      if (!isNaN(price) && sizes.length > 0) {
+        const status = sizes.some((s) => s.available) ? "in_stock" : "out_of_stock";
+        return {
+          price,
+          stock: status,
+          stockDetail: { status, raw: null, quantity: null },
+          source: "myntra-myx",
+        };
+      }
+      throw new Error("Myntra page loaded but window.__myx had no usable price/size data");
+    }
+
     let jsonLd = await extractFromJsonLd(page);
     if (!jsonLd) {
       // Render's network/CPU is measurably slower than a home connection — some sites

@@ -112,7 +112,11 @@ async function checkPurplleOutOfStockOverride(page) {
 // separate IP pool in the first place. Worth re-adding here if stale/false "back in
 // stock" readings start showing up again — the override logic alone wasn't sufficient
 // last time this was tried without a proxy.
-const PROXY_SITES = ["meesho.com", "jiomart.com", "myntra.com", "snapdeal.com"];
+// Meesho is deliberately absent: it's blocked everywhere we've tried, including a real
+// residential connection, so routing it here only ever spent credits on a request that
+// was going to fail. It stays in PRICE_CHECK_SKIP_SITES, which stops it before any
+// network call is made at all.
+const PROXY_SITES = ["jiomart.com", "myntra.com", "snapdeal.com"];
 
 function getProxyConfig(url) {
   if (!process.env.PROXY_SERVER) return undefined;
@@ -211,8 +215,6 @@ async function getPriceWithBrowserUnqueued(url, priceSelector, stockSelector) {
     // below (JSON-LD, __NEXT_DATA__, CSS selector) works completely unchanged — only
     // *how the HTML got into the page* differs for these sites.
     if (useScraperApi) {
-      const needsPremium = ["meesho.com"].some((host) => url.includes(host));
-
       // Every site routed through here is an Indian marketplace that treats a foreign IP
       // as untrusted — Snapdeal answers a CloudFront 403 outright, and JioMart quietly
       // serves its "Enter pin code" prompt in place of the price block. ScraperAPI's pool
@@ -233,10 +235,10 @@ async function getPriceWithBrowserUnqueued(url, priceSelector, stockSelector) {
       //              .product-description__productInfoContent. (Checking for the class
       //              name alone suggests otherwise — that was a wrong reading that this
       //              scraper's own selector immediately caught.)
-      const needsRender = ["jiomart.com", "meesho.com"].some((host) => url.includes(host));
+      const needsRender = url.includes("jiomart.com");
       const apiUrl =
         `https://api.scraperapi.com/?api_key=${process.env.SCRAPERAPI_KEY}&url=${encodeURIComponent(url)}` +
-        `&country_code=in${needsRender ? "&render=true" : ""}${needsPremium ? "&premium=true" : ""}`;
+        `&country_code=in${needsRender ? "&render=true" : ""}`;
 
       // ScraperAPI still answers 500 occasionally ("Request failed. You will not be
       // charged for this request") when its own proxy attempt fails. Far rarer without

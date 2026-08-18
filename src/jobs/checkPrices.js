@@ -136,7 +136,13 @@ async function getStats24h(productId) {
 // Used both for readings this server scraped itself, and for readings reported
 // in by an external worker (e.g. a script run on a home PC for sites like Meesho
 // that block cloud/data-center IPs).
-async function applyCheckResult(product, { price: scrapedPrice, stock: newStock, stockDetail }) {
+//
+// `manual` distinguishes a deliberate "Check now" click from the hourly cron. Running
+// unattended across every product, the cron is only worth interrupting for the two
+// things that need acting on — a product going out of stock, and a price moving — so
+// everything else (low stock, back in stock, quantity nudges) is kept for manual checks,
+// where the alert is really just confirmation that the click did something.
+async function applyCheckResult(product, { price: scrapedPrice, stock: newStock, stockDetail }, { manual = false } = {}) {
   const oldPrice = product.lastPrice;
   const oldStock = product.lastStock;
   const oldQuantity = product.lastStockQuantity;
@@ -194,13 +200,14 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
   }
 
   if (newStock && newStock !== oldStock) {
-    if (newStock === "out_of_stock" || newStock === "low_stock") {
-      const label = newStock === "out_of_stock" ? "🔴 OUT OF STOCK" : "🟠 LOW STOCK";
-      await sendTelegramMessage(`${label}\n\n<b>${product.name}</b>\nPlatform: ${product.site}\n${product.url}\n🕐 ${checkedAt}`);
-    } else if (newStock === "in_stock" && oldStock === "out_of_stock") {
+    if (newStock === "out_of_stock") {
+      await sendTelegramMessage(`🔴 OUT OF STOCK\n\n<b>${product.name}</b>\nPlatform: ${product.site}\n${product.url}\n🕐 ${checkedAt}`);
+    } else if (newStock === "low_stock" && manual) {
+      await sendTelegramMessage(`🟠 LOW STOCK\n\n<b>${product.name}</b>\nPlatform: ${product.site}\n${product.url}\n🕐 ${checkedAt}`);
+    } else if (newStock === "in_stock" && oldStock === "out_of_stock" && manual) {
       await sendTelegramMessage(`🟢 BACK IN STOCK\n\n<b>${product.name}</b>\nPlatform: ${product.site}\n${product.url}\n🕐 ${checkedAt}`);
     }
-  } else if (quantityChanged && oldQuantity != null) {
+  } else if (quantityChanged && oldQuantity != null && manual) {
     // Status stayed the same (still in_stock/low_stock) but the exact quantity moved —
     // this used to only show up as a silent line in the hourly summary count, with no
     // way to tell what actually changed without opening the dashboard.
@@ -264,7 +271,7 @@ function assertSiteReachable(site) {
   }
 }
 
-async function checkOneProduct(product) {
+async function checkOneProduct(product, { manual = false } = {}) {
   try {
     assertSiteReachable(product.site);
     let result = await fetchProduct(product);
@@ -294,7 +301,7 @@ async function checkOneProduct(product) {
       }
     }
 
-    const { newPrice, priceChanged, stockChanged } = await applyCheckResult(product, result);
+    const { newPrice, priceChanged, stockChanged } = await applyCheckResult(product, result, { manual });
     return {
       id: product._id,
       name: product.name,
@@ -342,11 +349,17 @@ async function runPriceCheck({ skipSites = [] } = {}) {
   const checkedAt = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
   const failed = results.filter((r) => !r.ok);
   const changed = results.filter((r) => r.ok && r.changed);
-  await sendTelegramMessage(
-    `⏰ Hourly check ran\n\n${results.length - failed.length}/${results.length} checked, ${changed.length} changed` +
-      (failed.length ? `, ${failed.length} failed (${failed.map((f) => f.name).join(", ")})` : "") +
-      `\n🕐 ${checkedAt}`
-  );
+
+  // Only worth a message when something actually went wrong. A clean run used to send
+  // this too, which meant 24 "nothing to see here" pings a day drowning the alerts that
+  // matter — and the run-health signal it existed for (has the cron fired at all?) is
+  // still visible on the dashboard's "last checked" timestamps.
+  if (failed.length) {
+    await sendTelegramMessage(
+      `⚠️ Hourly check — ${failed.length} failed\n\n${results.length - failed.length}/${results.length} checked, ${changed.length} changed\n` +
+        `Failed: ${failed.map((f) => f.name).join(", ")}\n🕐 ${checkedAt}`
+    );
+  }
 
   return results;
 }
@@ -408,7 +421,7 @@ async function syncGoogleSheets() {
 async function checkOneProductById(id) {
   const product = await Product.findById(id);
   if (!product) throw new Error("Product not found");
-  const result = await checkOneProduct(product);
+  const result = await checkOneProduct(product, { manual: true });
 
   // checkOneProduct catches its own errors (so a bulk run can report a per-product
   // failure and keep going) — but for a single manual "Check now" click, swallowing

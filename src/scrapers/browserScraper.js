@@ -111,7 +111,7 @@ async function checkPurplleOutOfStockOverride(page) {
 // separate IP pool in the first place. Worth re-adding here if stale/false "back in
 // stock" readings start showing up again — the override logic alone wasn't sufficient
 // last time this was tried without a proxy.
-const PROXY_SITES = ["meesho.com", "jiomart.com"];
+const PROXY_SITES = ["meesho.com", "jiomart.com", "myntra.com"];
 
 function getProxyConfig(url) {
   if (!process.env.PROXY_SERVER) return undefined;

@@ -211,22 +211,36 @@ async function getPriceWithBrowserUnqueued(url, priceSelector, stockSelector) {
     // below (JSON-LD, __NEXT_DATA__, CSS selector) works completely unchanged — only
     // *how the HTML got into the page* differs for these sites.
     if (useScraperApi) {
-      // Meesho is the one site in PROXY_SITES that's still failing on the cheap
-      // plain render=true tier, so it's the only one worth spending premium credits on.
-      // JioMart/Purplle already succeed on plain render=true.
       const needsPremium = ["meesho.com"].some((host) => url.includes(host));
+
       // Every site routed through here is an Indian marketplace that treats a foreign IP
       // as untrusted — Snapdeal answers a CloudFront 403 outright, and JioMart quietly
       // serves its "Enter pin code" prompt in place of the price block. ScraperAPI's pool
       // is worldwide by default, which is why results looked random: a run succeeded or
       // failed purely on where that request's exit IP happened to be. Pinning the exit
       // country makes it deterministic.
-      const apiUrl = `https://api.scraperapi.com/?api_key=${process.env.SCRAPERAPI_KEY}&url=${encodeURIComponent(url)}&render=true&country_code=in${needsPremium ? "&premium=true" : ""}`;
+      //
+      // render=true runs a browser on ScraperAPI's side. It's the slow, flaky part —
+      // measured over 3 runs per site it succeeded 1-2/3 at ~50s versus 3/3 at ~3s
+      // without, and it's what made a production "Check now" exceed the request timeout.
+      // So it's only requested where the page genuinely needs it:
+      //
+      //   Snapdeal — JSON-LD offers are in the server HTML. No render.
+      //   Myntra   — window.__myx is an inline script in the server HTML. No render.
+      //   JioMart  — needs it. Its price block is client-rendered; the server HTML does
+      //              carry .PriceContainer__currentPrice elements, but only inside the
+      //              recommendation carousels, not under
+      //              .product-description__productInfoContent. (Checking for the class
+      //              name alone suggests otherwise — that was a wrong reading that this
+      //              scraper's own selector immediately caught.)
+      const needsRender = ["jiomart.com", "meesho.com"].some((host) => url.includes(host));
+      const apiUrl =
+        `https://api.scraperapi.com/?api_key=${process.env.SCRAPERAPI_KEY}&url=${encodeURIComponent(url)}` +
+        `&country_code=in${needsRender ? "&render=true" : ""}${needsPremium ? "&premium=true" : ""}`;
 
-      // ScraperAPI intermittently answers 500 ("Request failed. You will not be charged
-      // for this request") when its own proxy attempt fails — observed on ~1 in 3 JioMart
-      // calls, with an immediate retry succeeding. Since failures aren't billed, retrying
-      // costs nothing but turns a flaky-looking site into a reliable one.
+      // ScraperAPI still answers 500 occasionally ("Request failed. You will not be
+      // charged for this request") when its own proxy attempt fails. Far rarer without
+      // render, but failures aren't billed, so retrying costs nothing.
       let loaded = false;
       let lastError = null;
       for (let attempt = 1; attempt <= 4; attempt++) {

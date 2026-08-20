@@ -238,35 +238,6 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
   const priceChanged = oldPrice != null && newPrice !== oldPrice;
   const stockChanged = Boolean(newStock && newStock !== oldStock) || quantityChanged;
 
-  // Flagged/Price Variation/Log are current-state snapshots, rebuilt fresh every sync —
-  // none of them keep a record of *when* a specific price move or stock transition
-  // happened (a "back in stock" item just disappears from Flagged, with no trace of
-  // when it went out or came back). This logs one row per actual event, immediately,
-  // as the Telegram alert for it fires — a real timestamped history, not a snapshot.
-  // prependRows (not appendRows) so the most recent event reads at the top.
-  if (priceChanged || stockChanged) {
-    const changeRows = [];
-    if (priceChanged) {
-      changeRows.push([
-        checkedAt,
-        product.name,
-        product.site,
-        newPrice > oldPrice ? "Price increase" : "Price decrease",
-        `₹${oldPrice}`,
-        `₹${newPrice}`,
-        product.url,
-      ]);
-    }
-    if (newStock && newStock !== oldStock) {
-      changeRows.push([checkedAt, product.name, product.site, "Stock change", oldStock || "unknown", newStock, product.url]);
-    }
-    const changesTab = process.env.GOOGLE_SHEETS_CHANGES_TAB || "Price & Stock Changes";
-    await googleSheets
-      .ensureHeader(changesTab, ["Timestamp", "Name", "Site", "Type", "Old", "New", "URL"])
-      .then(() => googleSheets.prependRows(changesTab, changeRows))
-      .catch((err) => console.error("Google Sheets change-log append failed:", err.message));
-  }
-
   return { newPrice, priceChanged, stockChanged };
 }
 
@@ -454,6 +425,55 @@ async function syncGoogleSheets() {
     process.env.GOOGLE_SHEETS_VARIATION_TAB || "Price Variation",
     ["Name", "Site", "Current", "Min (24h)", "Max (24h)", "Avg (24h)", "Stock", "URL", "Last Checked"],
     variationRows
+  );
+
+  // "Price & Stock Changes" tab — today's (IST midnight → now) price increase/decrease
+  // events only. Rebuilt fresh every sync so it always reflects exactly one calendar day
+  // and never accumulates across days. Stock changes excluded by design (user preference).
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const nowUTC = Date.now();
+  const nowISTms = nowUTC + IST_OFFSET_MS;
+  const istDate = new Date(nowISTms);
+  istDate.setUTCHours(0, 0, 0, 0); // midnight in IST fields
+  const istMidnightUTC = new Date(istDate.getTime() - IST_OFFSET_MS);
+
+  const todayPoints = await PricePoint.findAllSince(istMidnightUTC);
+  const productById = Object.fromEntries(allProducts.map((p) => [p._id, p]));
+
+  // Group points by product, then walk consecutive pairs to detect price changes
+  const pointsByProduct = {};
+  for (const pt of todayPoints) {
+    if (!pointsByProduct[pt.product]) pointsByProduct[pt.product] = [];
+    pointsByProduct[pt.product].push(pt);
+  }
+
+  const changeRows = [];
+  for (const [productId, points] of Object.entries(pointsByProduct)) {
+    const prod = productById[productId];
+    if (!prod) continue;
+    for (let i = 1; i < points.length; i++) {
+      const prev = points[i - 1].price;
+      const curr = points[i].price;
+      if (curr !== prev) {
+        changeRows.push([
+          formatIst(points[i].checkedAt),
+          prod.name,
+          prod.site,
+          curr > prev ? "Price increase" : "Price decrease",
+          `₹${prev}`,
+          `₹${curr}`,
+          prod.url,
+        ]);
+      }
+    }
+  }
+  // Newest first
+  changeRows.reverse();
+
+  await googleSheets.overwriteSheet(
+    process.env.GOOGLE_SHEETS_CHANGES_TAB || "Price & Stock Changes",
+    ["Timestamp", "Name", "Site", "Type", "Old", "New", "URL"],
+    changeRows
   );
 }
 

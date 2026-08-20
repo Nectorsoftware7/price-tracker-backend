@@ -58,4 +58,12 @@ async function statsForAllProducts(fromDate, toDate) {
   return byProduct;
 }
 
-module.exports = { create, findSince, findBetween, findLatest, statsForAllProducts };
+async function findAllSince(fromDate) {
+  const [rows] = await getPool().query(
+    "SELECT * FROM price_points WHERE checked_at >= ? ORDER BY product_id, checked_at ASC",
+    [fromDate]
+  );
+  return rows.map(toApiShape);
+}
+
+module.exports = { create, findSince, findBetween, findLatest, statsForAllProducts, findAllSince };

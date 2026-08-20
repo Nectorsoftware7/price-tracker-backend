@@ -446,7 +446,7 @@ async function syncGoogleSheets() {
   const variationRows = [];
   for (const p of allProducts) {
     const stats = statsByProduct[p._id];
-    if (stats && stats.min !== stats.max) {
+    if (stats) {
       variationRows.push([p.name, p.site, p.lastPrice ?? "", stats.min, stats.max, stats.avg, p.lastStock, p.url, formatCheckedAt(p)]);
     }
   }

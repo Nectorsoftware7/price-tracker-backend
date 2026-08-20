@@ -70,6 +70,24 @@ async function fetchViaFastPathOrBrowser(url, priceSelector, stockSelector) {
   }
 }
 
+// Local worker HTTP tunnel se scrape karo (Meesho/JioMart ke liye)
+// WORKER_HTTP_URL = Cloudflare tunnel URL, e.g. https://xyz.trycloudflare.com
+async function fetchViaLocalWorker(url, priceSelector, stockSelector) {
+  const workerUrl = process.env.WORKER_HTTP_URL;
+  if (!workerUrl) throw new Error("WORKER_HTTP_URL not set in .env");
+
+  const axios = require("axios");
+  const { data } = await axios.post(
+    `${workerUrl}/scrape`,
+    { url, priceSelector, stockSelector },
+    {
+      headers: { "x-worker-secret": process.env.LOCAL_WORKER_SECRET },
+      timeout: 90000,
+    }
+  );
+  return data;
+}
+
 async function fetchProduct(product) {
   const defaults = SITE_DEFAULT_SELECTORS[product.site];
   const priceSelector = product.priceSelector || defaults?.priceSelector;
@@ -81,10 +99,6 @@ async function fetchProduct(product) {
     case "woocommerce":
       return getWooCommerceProduct(product.url, priceSelector, stockSelector);
     case "flipkart": {
-      // Price always comes from the public page — that's what the customer actually
-      // pays (it reflects platform-wide sale discounts the Seller API doesn't know
-      // about). If a Seller Hub SKU is configured, only the stock quantity is
-      // overlaid from the Flipkart Seller API, which is authoritative for that.
       const result = await fetchViaFastPathOrBrowser(product.url, priceSelector, stockSelector);
       if (product.flipkartSku) {
         const exact = await getFlipkartExactStock(product.flipkartSku);
@@ -101,17 +115,17 @@ async function fetchProduct(product) {
     }
     case "meesho":
     case "jiomart":
+      // Agar local worker tunnel configured hai toh use karo (cloud IP blocked hai)
+      // Warna skip hoga (PRICE_CHECK_SKIP_SITES se)
+      if (process.env.WORKER_HTTP_URL) {
+        return fetchViaLocalWorker(product.url, priceSelector, stockSelector);
+      }
+      return fetchViaFastPathOrBrowser(product.url, priceSelector, stockSelector);
     case "tira":
     case "nykaa":
     case "snapdeal":
     case "purplle":
     case "myntra":
-      // No site-specific handling yet — relies on the generic JSON-LD /
-      // __NEXT_DATA__ / CSS-selector fallback chain in getPriceWithBrowser.
-      // If a site doesn't expose JSON-LD, priceSelector/stockSelector must be
-      // supplied per-product (same as any other custom site). Myntra itself is
-      // handled earlier in that chain — fastFetch reads its window.__myx payload
-      // directly — so this case rarely falls through to an actual browser launch.
       return fetchViaFastPathOrBrowser(product.url, priceSelector, stockSelector);
     default:
       throw new Error(`Unknown site type: ${product.site}`);
@@ -452,7 +466,13 @@ async function checkOneProductById(id) {
   // failure and keep going) — but for a single manual "Check now" click, swallowing
   // the failure here just left the row silently unchanged with no feedback at all,
   // looking like the button did nothing. Surface it so the dashboard can show it.
-  if (!result.ok) throw new Error(result.error);
+  // Exception: skip-site errors (meesho etc.) are handled by local worker — return
+  // product as-is so the dashboard doesn't show a scary red error for these.
+  if (!result.ok) {
+    const isSkipSite = result.error?.includes("blocked from this server") || result.error?.includes("no proxy configured");
+    if (!isSkipSite) throw new Error(result.error);
+    return Product.findById(id);
+  }
 
   // A real price/stock change already gets its own detailed alert from
   // applyCheckResult. A manual "Check now" click is a deliberate verification action

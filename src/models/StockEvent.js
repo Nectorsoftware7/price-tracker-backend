@@ -29,14 +29,16 @@ async function findByProduct(productId, limit = 50) {
 // A cross-product feed (dashboard equivalent of the "Price & Stock Changes" Sheet tab)
 // — joins in the product's current name/site/url so the frontend doesn't need a
 // separate lookup per row.
-async function findRecent(limit = 100) {
+async function findRecent(limit = 500, hours = 24) {
+  const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
   const [rows] = await getPool().query(
     `SELECT se.*, p.name AS product_name, p.site AS product_site, p.url AS product_url
      FROM stock_events se
      JOIN products p ON p.id = se.product_id
+     WHERE se.checked_at >= ?
      ORDER BY se.checked_at DESC
      LIMIT ?`,
-    [limit]
+    [cutoff, limit]
   );
   return rows.map((row) => ({
     ...toApiShape(row),

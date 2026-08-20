@@ -138,7 +138,8 @@ const getStockEvents = asyncHandler(async (req, res) => {
 });
 
 const getAllStockEvents = asyncHandler(async (req, res) => {
-  res.json(await StockEvent.findRecent(100));
+  const hours = parseInt(req.query.hours, 10) || 24;
+  res.json(await StockEvent.findRecent(500, hours));
 });
 
 // Manually trigger the same check the hourly cron runs, for all active products at once

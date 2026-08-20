@@ -413,11 +413,21 @@ async function syncGoogleSheets() {
   // getStats24h's extra "fall back to the single latest point" behaviour isn't needed
   // here: a product with no points in the window yields min === max either way, and is
   // filtered out below regardless.
-  const statsByProduct = await PricePoint.statsForAllProducts(new Date(Date.now() - 24 * 60 * 60 * 1000), new Date());
+  // IST midnight = aaj raat 12 baje se abhi tak — dono tabs isi cutoff se filter honge
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const nowUTC = Date.now();
+  const nowISTms = nowUTC + IST_OFFSET_MS;
+  const istDate = new Date(nowISTms);
+  istDate.setUTCHours(0, 0, 0, 0);
+  const istMidnightUTC = new Date(istDate.getTime() - IST_OFFSET_MS);
+
+  const statsByProduct = await PricePoint.statsForAllProducts(istMidnightUTC, new Date());
   const variationRows = [];
   for (const p of allProducts) {
     const stats = statsByProduct[p._id];
-    if (stats) {
+    // Only products actually checked today (lastCheckedAt >= IST midnight)
+    const checkedToday = p.lastCheckedAt && new Date(p.lastCheckedAt) >= istMidnightUTC;
+    if (stats && checkedToday) {
       variationRows.push([p.name, p.site, p.lastPrice ?? "", stats.min, stats.max, stats.avg, p.lastStock, p.url, formatCheckedAt(p)]);
     }
   }
@@ -427,15 +437,7 @@ async function syncGoogleSheets() {
     variationRows
   );
 
-  // "Price & Stock Changes" tab — today's (IST midnight → now) price increase/decrease
-  // events only. Rebuilt fresh every sync so it always reflects exactly one calendar day
-  // and never accumulates across days. Stock changes excluded by design (user preference).
-  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-  const nowUTC = Date.now();
-  const nowISTms = nowUTC + IST_OFFSET_MS;
-  const istDate = new Date(nowISTms);
-  istDate.setUTCHours(0, 0, 0, 0); // midnight in IST fields
-  const istMidnightUTC = new Date(istDate.getTime() - IST_OFFSET_MS);
+  // "Price & Stock Changes" tab — today's (IST midnight → now) price increase/decrease only
 
   const todayPoints = await PricePoint.findAllSince(istMidnightUTC);
   const productById = Object.fromEntries(allProducts.map((p) => [p._id, p]));

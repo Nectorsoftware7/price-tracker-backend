@@ -458,23 +458,25 @@ async function syncGoogleSheets() {
   // ~37s against ~205ms for the bulk equivalent — and since this runs after *every*
   // manual "Check now", it, not the scrape, was what made that button feel slow.
   // getStats24h's extra "fall back to the single latest point" behaviour isn't needed
-  // here: a product with no points in the window yields min === max either way, and is
-  // filtered out below regardless.
-  // IST midnight = aaj raat 12 baje se abhi tak — dono tabs isi cutoff se filter honge
-  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-  const nowUTC = Date.now();
-  const nowISTms = nowUTC + IST_OFFSET_MS;
-  const istDate = new Date(nowISTms);
-  istDate.setUTCHours(0, 0, 0, 0);
-  const istMidnightUTC = new Date(istDate.getTime() - IST_OFFSET_MS);
+  // here: a product with no points in the window yields min === max either way.
+  //
+  // The window is a rolling last-24-hours, not "since IST midnight". With a midnight
+  // cutoff a price that moved yesterday evening showed no variation at all this morning
+  // — the old figure sat just outside the window, so min and max were both the new
+  // price. A real example: ₹98 recorded at 5pm, ₹113 the next morning, and the tab
+  // reported 113/113/113 while the change log correctly showed the increase. Rolling 24h
+  // keeps both readings in view, so the movement is visible for a full day after it
+  // happens rather than being erased at midnight.
+  const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  const statsByProduct = await PricePoint.statsForAllProducts(istMidnightUTC, new Date());
+  const statsByProduct = await PricePoint.statsForAllProducts(windowStart, new Date());
   const variationRows = [];
   for (const p of allProducts) {
     const stats = statsByProduct[p._id];
-    // Only products actually checked today (lastCheckedAt >= IST midnight)
-    const checkedToday = p.lastCheckedAt && new Date(p.lastCheckedAt) >= istMidnightUTC;
-    if (stats && checkedToday) {
+    // Skip products with no reading in the window at all — a stale row would otherwise
+    // sit here implying it was priced that way today.
+    const checkedInWindow = p.lastCheckedAt && new Date(p.lastCheckedAt) >= windowStart;
+    if (stats && checkedInWindow) {
       variationRows.push([p.name, p.site, p.lastPrice ?? "", stats.min, stats.max, stats.avg, p.lastStock, p.url, formatCheckedAt(p)]);
     }
   }

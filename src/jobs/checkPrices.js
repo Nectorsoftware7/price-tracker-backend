@@ -12,6 +12,9 @@ const googleSheets = require("../services/googleSheets");
 
 const FLAGGED_STATUSES = ["out_of_stock", "low_stock"];
 
+// Shared so the header written on a fresh tab can't drift from the rows appended to it.
+const CHANGES_HEADER = ["Timestamp", "Name", "Site", "Type", "Old", "New", "URL"];
+
 // JioMart's JSON-LD leaves offers.price blank, so it always needs a CSS selector
 // fallback. Rather than making the user supply one, we ship known-good selectors for
 // JioMart's product page template so "just paste the URL" keeps working everywhere.
@@ -236,7 +239,51 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
   console.log(`[${product.name}] price: ${newPrice}, stock: ${newStock}${newQuantity != null ? ` (${newQuantity} units)` : ""}`);
 
   const priceChanged = oldPrice != null && newPrice !== oldPrice;
-  const stockChanged = Boolean(newStock && newStock !== oldStock) || quantityChanged;
+  const statusChanged = Boolean(newStock && newStock !== oldStock);
+  const stockChanged = statusChanged || quantityChanged;
+
+  // One row per real event, written the moment it happens. This tab is the only
+  // timestamped history in the sheet — Log, Flagged and Price Variation are all
+  // snapshots rebuilt from current state each run, so a change that comes and goes
+  // between runs leaves no trace in them at all.
+  //
+  // Both kinds of change are recorded in the same shape: Old is what it was, New is what
+  // it became. A product can move price and stock in the same check, which is two
+  // separate events and therefore two rows.
+  const changeRows = [];
+  if (priceChanged) {
+    changeRows.push([
+      checkedAt,
+      product.name,
+      product.site,
+      newPrice > oldPrice ? "Price increase" : "Price decrease",
+      `₹${oldPrice}`,
+      `₹${newPrice}`,
+      product.url,
+    ]);
+  }
+  if (statusChanged) {
+    changeRows.push([
+      checkedAt,
+      product.name,
+      product.site,
+      "Stock change",
+      oldStock || "unknown",
+      newStock,
+      product.url,
+    ]);
+  }
+  if (changeRows.length) {
+    // Never let a Sheets hiccup fail the check itself — the reading is already saved to
+    // the database by this point, which is the source of truth.
+    try {
+      const tab = process.env.GOOGLE_SHEETS_CHANGES_TAB || "Price & Stock Changes";
+      await googleSheets.ensureHeader(tab, CHANGES_HEADER);
+      await googleSheets.prependRows(tab, changeRows);
+    } catch (err) {
+      console.error("Change-log write failed:", err.message);
+    }
+  }
 
   return { newPrice, priceChanged, stockChanged };
 }
@@ -437,45 +484,13 @@ async function syncGoogleSheets() {
     variationRows
   );
 
-  // "Price & Stock Changes" tab — today's (IST midnight → now) price increase/decrease only
-
-  const todayPoints = await PricePoint.findAllSince(istMidnightUTC);
-  const productById = Object.fromEntries(allProducts.map((p) => [p._id, p]));
-
-  // Group points by product, then walk consecutive pairs to detect price changes
-  const pointsByProduct = {};
-  for (const pt of todayPoints) {
-    if (!pointsByProduct[pt.product]) pointsByProduct[pt.product] = [];
-    pointsByProduct[pt.product].push(pt);
-  }
-
-  const changeRows = [];
-  for (const [productId, points] of Object.entries(pointsByProduct)) {
-    const prod = productById[productId];
-    if (!prod) continue;
-    for (let i = 1; i < points.length; i++) {
-      const prev = points[i - 1].price;
-      const curr = points[i].price;
-      if (curr !== prev) {
-        changeRows.push([
-          formatIst(points[i].checkedAt),
-          prod.name,
-          prod.site,
-          curr > prev ? "Price increase" : "Price decrease",
-          `₹${prev}`,
-          `₹${curr}`,
-          prod.url,
-        ]);
-      }
-    }
-  }
-  // Newest first
-  changeRows.reverse();
-
-  await googleSheets.overwriteSheet(
+  // The "Price & Stock Changes" tab is deliberately NOT rebuilt here. It's an
+  // append-only history written by applyCheckResult as each change happens; rebuilding
+  // it from current state would erase every event older than whatever the rebuild could
+  // reconstruct — which is how it ended up empty. Only make sure its header exists.
+  await googleSheets.ensureHeader(
     process.env.GOOGLE_SHEETS_CHANGES_TAB || "Price & Stock Changes",
-    ["Timestamp", "Name", "Site", "Type", "Old", "New", "URL"],
-    changeRows
+    CHANGES_HEADER
   );
 }
 

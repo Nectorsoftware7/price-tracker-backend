@@ -12,6 +12,15 @@ function normalizeSku(sku) {
   return trimmed || null;
 }
 
+// A cleared form field arrives as "", which MySQL would happily store as 0.00 — a floor
+// of zero that no price can ever breach, silently disabling the alert instead of removing
+// it. Anything not a real number becomes NULL.
+function normalizeMoney(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
 function normalizeUrl(site, url) {
   if (!url) return url;
   const stripped = url.split("?")[0];
@@ -35,6 +44,7 @@ function toApiShape(row) {
     stockSelector: row.stock_selector,
     flipkartSku: row.flipkart_sku,
     productGroup: row.product_group,
+    targetPrice: row.target_price != null ? Number(row.target_price) : null,
     lastPrice: row.last_price != null ? Number(row.last_price) : null,
     lastStock: row.last_stock,
     lastStockQuantity: row.last_stock_quantity,
@@ -60,10 +70,10 @@ async function findById(id) {
   return toApiShape(rows[0]);
 }
 
-async function create({ name, site, url, priceSelector, stockSelector, flipkartSku, productGroup, active = true }) {
+async function create({ name, site, url, priceSelector, stockSelector, flipkartSku, productGroup, targetPrice, active = true }) {
   const [result] = await getPool().query(
-    "INSERT INTO products (name, site, url, price_selector, stock_selector, flipkart_sku, product_group, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    [name, site, normalizeUrl(site, url), priceSelector || null, stockSelector || null, normalizeSku(flipkartSku), productGroup || null, active ? 1 : 0]
+    "INSERT INTO products (name, site, url, price_selector, stock_selector, flipkart_sku, product_group, target_price, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [name, site, normalizeUrl(site, url), priceSelector || null, stockSelector || null, normalizeSku(flipkartSku), productGroup || null, normalizeMoney(targetPrice), active ? 1 : 0]
   );
   return findById(result.insertId);
 }
@@ -76,6 +86,9 @@ async function update(id, fields) {
   if (fields.flipkartSku !== undefined) {
     fields = { ...fields, flipkartSku: normalizeSku(fields.flipkartSku) };
   }
+  if (fields.targetPrice !== undefined) {
+    fields = { ...fields, targetPrice: normalizeMoney(fields.targetPrice) };
+  }
 
   const columnMap = {
     name: "name",
@@ -85,6 +98,7 @@ async function update(id, fields) {
     stockSelector: "stock_selector",
     flipkartSku: "flipkart_sku",
     productGroup: "product_group",
+    targetPrice: "target_price",
     active: "active",
   };
   const sets = [];

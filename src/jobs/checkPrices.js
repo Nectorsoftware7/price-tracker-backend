@@ -206,6 +206,26 @@ async function applyCheckResult(product, { price: scrapedPrice, stock: newStock,
     );
   }
 
+  // A listing that has fallen under its floor. This is a separate alert from the price
+  // change above, because it answers a different question: not "did this move" but "is
+  // this now wrong".
+  //
+  // It fires on the crossing, not on the state. Alerting while below would repeat every
+  // hour for as long as the discount runs, which is exactly the kind of noise the hourly
+  // run was quietened down to remove — after the second identical message nobody reads
+  // the third. So it needs the price to have actually moved this check, and to have been
+  // at or above the floor beforehand. A listing already below when a floor is first set
+  // stays quiet until its next move; the Products table flags it in the meantime, which
+  // is where someone setting a floor is already looking.
+  const floor = product.targetPrice;
+  if (floor != null && newPrice != null && newPrice < floor && oldPrice != null && oldPrice >= floor) {
+    const under = Math.round((floor - newPrice) * 100) / 100;
+    await sendTelegramMessage(
+      `⚠️ BELOW TARGET PRICE\n\n<b>${product.name}</b>\nPlatform: ${product.site}\n` +
+        `Target: ₹${floor}\nNow: ₹${newPrice} (₹${under} under)\n${product.url}\n🕐 ${checkedAt}`
+    );
+  }
+
   // Log a stock event on a status change, OR when we have an exact quantity that
   // moved since the last check — status alone ("in_stock") hides a 45 -> 3 drop.
   const quantityChanged = newQuantity != null && newQuantity !== oldQuantity;

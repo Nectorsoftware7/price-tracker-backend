@@ -34,6 +34,7 @@ function toApiShape(row) {
     priceSelector: row.price_selector,
     stockSelector: row.stock_selector,
     flipkartSku: row.flipkart_sku,
+    productGroup: row.product_group,
     lastPrice: row.last_price != null ? Number(row.last_price) : null,
     lastStock: row.last_stock,
     lastStockQuantity: row.last_stock_quantity,
@@ -59,10 +60,10 @@ async function findById(id) {
   return toApiShape(rows[0]);
 }
 
-async function create({ name, site, url, priceSelector, stockSelector, flipkartSku, active = true }) {
+async function create({ name, site, url, priceSelector, stockSelector, flipkartSku, productGroup, active = true }) {
   const [result] = await getPool().query(
-    "INSERT INTO products (name, site, url, price_selector, stock_selector, flipkart_sku, active) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    [name, site, normalizeUrl(site, url), priceSelector || null, stockSelector || null, normalizeSku(flipkartSku), active ? 1 : 0]
+    "INSERT INTO products (name, site, url, price_selector, stock_selector, flipkart_sku, product_group, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    [name, site, normalizeUrl(site, url), priceSelector || null, stockSelector || null, normalizeSku(flipkartSku), productGroup || null, active ? 1 : 0]
   );
   return findById(result.insertId);
 }
@@ -83,6 +84,7 @@ async function update(id, fields) {
     priceSelector: "price_selector",
     stockSelector: "stock_selector",
     flipkartSku: "flipkart_sku",
+    productGroup: "product_group",
     active: "active",
   };
   const sets = [];

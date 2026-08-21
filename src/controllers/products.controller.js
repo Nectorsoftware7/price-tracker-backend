@@ -193,7 +193,51 @@ const getDashboard = asyncHandler(async (req, res) => {
     if (tracked > 0) stockByDay.push({ date: key, outOfStock, tracked });
   }
 
-  res.json({ days, priceMovers, stockByDay });
+  // The same product's price on each marketplace it is listed on.
+  //
+  // Grouping comes from products.product_group, which a person sets, rather than from
+  // matching names here: names differ enough between marketplaces that any automatic
+  // rule either misses most of them or merges products that are not the same, and a
+  // wrong pairing invents a price gap that does not exist. Ungrouped listings are simply
+  // left out — a missing row is honest, a wrong one is not.
+  const groups = new Map();
+  for (const product of products) {
+    if (!product.productGroup || product.lastPrice == null) continue;
+    const entry = groups.get(product.productGroup) || { offers: [] };
+    entry.offers.push({
+      id: product._id,
+      site: product.site,
+      price: product.lastPrice,
+      stock: product.lastStock,
+      url: product.url,
+      name: product.name,
+    });
+    groups.set(product.productGroup, entry);
+  }
+
+  const marketplacePrices = [];
+  for (const [key, { offers }] of groups) {
+    // One marketplace is not a comparison.
+    if (new Set(offers.map((o) => o.site)).size < 2) continue;
+    offers.sort((a, b) => a.price - b.price);
+    const low = offers[0].price;
+    const high = offers[offers.length - 1].price;
+    marketplacePrices.push({
+      key,
+      // The listing titles differ per marketplace, so the longest is used as the label —
+      // it is the one most likely to name the product in full.
+      label: offers.reduce((longest, o) => (o.name.length > longest.length ? o.name : longest), ""),
+      offers,
+      low,
+      high,
+      spreadPct: low ? Math.round(((high - low) / low) * 1000) / 10 : 0,
+    });
+  }
+  marketplacePrices.sort((a, b) => b.spreadPct - a.spreadPct);
+
+  const ungrouped = products.filter((p) => p.active && !p.productGroup).length;
+
+  res.json({ days, priceMovers, stockByDay, marketplacePrices, ungrouped });
 });
 
 const getStockEvents = asyncHandler(async (req, res) => {

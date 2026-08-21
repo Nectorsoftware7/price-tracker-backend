@@ -22,7 +22,25 @@ const listProducts = asyncHandler(async (req, res) => {
   res.json(await Product.findAll());
 });
 
+// A Shopify link is read through the storefront .js endpoint, which only exists for a
+// product page — the model appends ".js" to whatever it is given. Hand it a collection or
+// home page and that becomes a URL that simply 404s, and the failure surfaces much later
+// as "Request failed with status code 404", which says nothing about the real mistake.
+//
+// A Shopify product URL always contains /products/<handle>, so the wrong kind of link can
+// be turned away here with an explanation instead.
+function assertUsableUrl(site, url) {
+  if (site !== "shopify" || !url) return;
+  if (/\/products\/[^/]+/.test(url)) return;
+  throw new ApiError(
+    400,
+    "That does not look like a Shopify product link. It should contain /products/ — for example https://yourstore.com/products/product-name. " +
+      "If the site actually runs on WordPress/WooCommerce, pick WooCommerce as the platform instead."
+  );
+}
+
 const createProduct = asyncHandler(async (req, res) => {
+  assertUsableUrl(req.body.site, req.body.url);
   const product = await Product.create(req.body);
   await sendTelegramMessage(`➕ <b>Added to tracking</b>\n\n<b>${product.name}</b>\nSite: ${product.site}\n${product.url}`);
   res.status(201).json(product);
@@ -92,6 +110,10 @@ const bulkImportProducts = asyncHandler(async (req, res) => {
 });
 
 const updateProduct = asyncHandler(async (req, res) => {
+  if (req.body.url !== undefined) {
+    const site = req.body.site ?? (await Product.findById(req.params.id))?.site;
+    assertUsableUrl(site, req.body.url);
+  }
   const product = await Product.update(req.params.id, req.body);
   if (!product) throw new ApiError(404, "Not found");
   res.json(product);

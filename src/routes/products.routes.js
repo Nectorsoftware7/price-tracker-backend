@@ -9,6 +9,7 @@ const {
   deleteProduct,
   getHistory,
   getAllStats,
+  getDashboard,
   getStockEvents,
   getAllStockEvents,
   checkAll,
@@ -24,6 +25,7 @@ router.post("/bulk-import", requireAuth, blockViewer, bulkImportProducts);
 router.put("/:id", requireAuth, blockViewer, updateProduct);
 router.delete("/:id", requireAuth, blockViewer, deleteProduct);
 router.get("/stats", requireAuth, getAllStats);
+router.get("/dashboard", requireAuth, getDashboard);
 router.get("/stock-events", requireAuth, getAllStockEvents);
 router.get("/:id/history", requireAuth, getHistory);
 router.get("/:id/stock-events", requireAuth, getStockEvents);

@@ -5,6 +5,7 @@ const { checkOneProductById, getStats24h, runPriceCheck, reportCheckResult } = r
 const { sendTelegramMessage } = require("../services/telegram");
 const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
+const { istDayKey } = require("../utils/formatIst");
 
 function computeStats(points) {
   if (points.length === 0) return null;
@@ -133,6 +134,68 @@ const getAllStats = asyncHandler(async (req, res) => {
   res.json(await PricePoint.statsForAllProducts(fromDate, toDate));
 });
 
+// Everything the dashboard needs that cannot be derived from the product list alone:
+// which prices moved and in which direction, and how many listings were out of stock on
+// each day. Both need history, and both are cheap enough to answer together — one round
+// trip beats the page firing two.
+const getDashboard = asyncHandler(async (req, res) => {
+  const requested = parseInt(req.query.days, 10);
+  const days = Math.min(Math.max(Number.isFinite(requested) ? requested : 14, 1), 90);
+  const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const products = await Product.findAll();
+  const byId = new Map(products.map((p) => [p._id, p]));
+
+  // Movers: endpoints of the window, keeping only products that actually ended
+  // somewhere different from where they started.
+  const bounds = await PricePoint.firstAndLastSince(from);
+  const priceMovers = [];
+  for (const [id, { first, last }] of Object.entries(bounds)) {
+    const product = byId.get(Number(id));
+    if (!product || !first || last == null || first === last) continue;
+    priceMovers.push({
+      id: product._id,
+      name: product.name,
+      site: product.site,
+      url: product.url,
+      first,
+      last,
+      changePct: Math.round(((last - first) / first) * 1000) / 10,
+    });
+  }
+  priceMovers.sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct));
+
+  // Out of stock per day. Events are change-only, so this walks the full history once
+  // and carries each product's last known status forward into every later day.
+  const events = await StockEvent.findAllOrdered();
+  const today = Date.now();
+  const status = new Map();
+  const stockByDay = [];
+  let cursor = 0;
+
+  for (let back = days - 1; back >= 0; back--) {
+    const key = istDayKey(new Date(today - back * 24 * 60 * 60 * 1000));
+    while (cursor < events.length && istDayKey(events[cursor].checkedAt) <= key) {
+      status.set(events[cursor].product, events[cursor].status);
+      cursor++;
+    }
+    let outOfStock = 0;
+    let tracked = 0;
+    for (const [productId, value] of status) {
+      // A product deleted since then should not keep inflating past days.
+      if (!byId.has(productId)) continue;
+      tracked++;
+      if (value === "out_of_stock") outOfStock++;
+    }
+    // Days before any product had ever been checked carry no information. Emitting
+    // them would draw a line sitting flat on zero, which reads as "nothing was out of
+    // stock" when it actually means "nothing was known yet".
+    if (tracked > 0) stockByDay.push({ date: key, outOfStock, tracked });
+  }
+
+  res.json({ days, priceMovers, stockByDay });
+});
+
 const getStockEvents = asyncHandler(async (req, res) => {
   res.json(await StockEvent.findByProduct(req.params.id, 50));
 });
@@ -184,6 +247,7 @@ module.exports = {
   deleteProduct,
   getHistory,
   getAllStats,
+  getDashboard,
   getStockEvents,
   getAllStockEvents,
   checkAll,

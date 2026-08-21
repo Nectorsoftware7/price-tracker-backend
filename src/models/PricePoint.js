@@ -66,4 +66,34 @@ async function findAllSince(fromDate) {
   return rows.map(toApiShape);
 }
 
-module.exports = { create, findSince, findBetween, findLatest, statsForAllProducts, findAllSince };
+// The first and last price each product carried inside a window, in one query.
+//
+// min/max cannot answer this: a product that went 100 -> 120 -> 100 has exactly the same
+// min and max as one that went 100 -> 120 and stayed there, yet one moved and the other
+// did not. Direction needs the endpoints, not the extremes.
+//
+// Both endpoints come out of a single pass by numbering each product's rows from each
+// end and keeping the two that land on 1. id breaks ties so two points sharing a
+// timestamp still order deterministically.
+async function firstAndLastSince(fromDate) {
+  const [rows] = await getPool().query(
+    `SELECT product_id, price, rn_asc, rn_desc FROM (
+       SELECT product_id, price,
+              ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY checked_at ASC, id ASC) AS rn_asc,
+              ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY checked_at DESC, id DESC) AS rn_desc
+       FROM price_points
+       WHERE checked_at >= ?
+     ) ranked
+     WHERE rn_asc = 1 OR rn_desc = 1`,
+    [fromDate]
+  );
+  const byProduct = {};
+  for (const row of rows) {
+    const entry = (byProduct[row.product_id] ||= { first: null, last: null });
+    if (Number(row.rn_asc) === 1) entry.first = Number(row.price);
+    if (Number(row.rn_desc) === 1) entry.last = Number(row.price);
+  }
+  return byProduct;
+}
+
+module.exports = { create, findSince, findBetween, findLatest, statsForAllProducts, findAllSince, firstAndLastSince };

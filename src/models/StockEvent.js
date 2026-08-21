@@ -48,4 +48,18 @@ async function findRecent(limit = 500, hours = 24) {
   }));
 }
 
-module.exports = { create, findByProduct, findRecent };
+// Every event, oldest first.
+//
+// stock_events only records *changes*, so answering "what was this product's status on
+// day X" means carrying the last event forward — which needs the whole history, not a
+// window of it: a product that went out of stock in June and never changed since has no
+// event inside any recent window, yet is still out of stock. The table holds a few
+// hundred rows, so reading all of it is cheaper than the query that would avoid it.
+async function findAllOrdered() {
+  const [rows] = await getPool().query(
+    "SELECT product_id, status, checked_at FROM stock_events ORDER BY checked_at ASC, id ASC"
+  );
+  return rows.map((row) => ({ product: row.product_id, status: row.status, checkedAt: row.checked_at }));
+}
+
+module.exports = { create, findByProduct, findRecent, findAllOrdered };

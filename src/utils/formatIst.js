@@ -33,4 +33,12 @@ function formatIst(value = new Date()) {
   return `${day} ${month} ${year}, ${hours12}:${minutes} ${meridiem}`;
 }
 
-module.exports = { formatIst };
+// The IST calendar day as YYYY-MM-DD. Bucketing by the server's own day would file
+// everything after 6:30pm IST under the next date, since the server runs in UTC.
+function istDayKey(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (isNaN(date.getTime())) return "";
+  return new Date(date.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+module.exports = { formatIst, istDayKey };

@@ -16,6 +16,12 @@ CREATE TABLE IF NOT EXISTS products (
   price_selector VARCHAR(500),
   stock_selector VARCHAR(500),
   flipkart_sku VARCHAR(100),
+  -- Links the same physical product across marketplaces, so their prices can be
+  -- compared. Set by hand: marketplace titles differ too much to match reliably.
+  product_group VARCHAR(120),
+  -- The floor this listing should not be discounted below. NULL means no floor;
+  -- it must never default to 0, which no price could ever breach.
+  target_price DECIMAL(10,2),
   last_price DECIMAL(12,2),
   last_stock ENUM('in_stock', 'low_stock', 'out_of_stock', 'unknown') DEFAULT 'unknown',
   last_stock_quantity INT,

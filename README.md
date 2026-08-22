@@ -1,9 +1,23 @@
 # Price Tracker — Backend
 
-Express API + MySQL + a Playwright-backed scraper that tracks live price/stock across 9
-e-commerce sites (Flipkart, Shopify, WooCommerce, JioMart, Purplle, Snapdeal, Nykaa, Tira,
-Meesho), sends Telegram alerts on changes, logs to Google Sheets, and uses AI (Hermes via
-OpenRouter) to auto-reply to product reviews and WordPress Contact Form 7 submissions.
+Express API + MySQL + a Playwright-backed scraper that tracks live price and stock across ten
+marketplaces (Flipkart, Meesho, JioMart, Myntra, Snapdeal, Tira, Nykaa, Purplle, plus any Shopify
+or WooCommerce store), sends Telegram alerts on changes, mirrors everything to Google Sheets, and
+uses AI (Hermes via OpenRouter) to draft replies to product reviews and WordPress Contact Form 7
+submissions.
+
+### What it serves
+
+- **Checks** — price and stock per listing, on a schedule and on demand, with full history kept
+- **Alerts** — out of stock, back in stock, price up/down, and below a per-listing target price
+  (which fires on the crossing rather than every hour it stays under)
+- **Dashboard data** — one endpoint (`GET /api/products/dashboard`) returning the headline figures,
+  daily out-of-stock counts, biggest price moves, how often each listing changes price or stock,
+  and the same product's price on each marketplace it is listed on
+- **Sheets** — Log, Flagged, Price Variation, and an append-only Price & Stock Changes tab
+- **Contact form** — CF7 submissions, an AI-drafted reply emailed out, and a manual reply path
+- **Roles** — `admin` (E-commerce Executive), `superadmin`, and a read-only `viewer` whose writes
+  are refused server-side, not only hidden in the UI
 
 The companion frontend dashboard lives in a separate repo — see
 [price-tracker-frontend](https://github.com/Nectorsoftware7/price-tracker-frontend).
@@ -40,15 +54,38 @@ The companion frontend dashboard lives in a separate repo — see
 
 ## Setup
 
+Requires Node.js 20+ and MySQL 8 / MariaDB 10.5+ (window functions are used).
+
 ```bash
+# 1. database — schema.sql is the whole schema
+mysql -u root -p -e "CREATE DATABASE price_tracker"
+mysql -u root -p price_tracker < schema.sql
+
+# 2. dependencies and config
 npm install
 npx playwright install chromium
-copy .env.example .env    # then fill in the values below
-npm start
+cp .env.example .env       # then fill in the values below
+
+# 3. login accounts, created from ADMIN_* / SUPERADMIN_* in .env
+npm run seed:admin
+
+# 4. run
+npm run dev                # or: npm start
 ```
 
 Runs the API on `http://localhost:4000` (or `$PORT`). There is no in-process cron — trigger checks
 via the dashboard, or set up external scheduling (see "Deploying" below).
+
+### One-off scripts
+
+`src/scripts/` holds maintenance scripts, each safe to re-run:
+
+| Script | What it does |
+|---|---|
+| `seedAdmin.js` | Creates or updates the login accounts from `.env` |
+| `createViewerUser.js` | Adds the read-only demo account |
+| `formatSheets.js` | Applies header styling, banding, status colours and per-column filters to the Google Sheet |
+| `addMyntraSite.js`, `addProductGroup.js`, `addTargetPrice.js` | Upgrade a database created before those columns existed. A fresh one from `schema.sql` already has them |
 
 ### Local development — exposing localhost with ngrok
 
@@ -80,7 +117,10 @@ traffic through a tunnel — handy for debugging exactly what a webhook payload 
 | `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_DATABASE` | Yes | Database connection |
 | `JWT_SECRET` | Yes | Signs dashboard login tokens |
 | `JWT_EXPIRES_IN` | No (default `7d`) | Token lifetime |
-| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | Yes | Dashboard login credentials |
+| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | Yes | Dashboard login for the E-commerce Executive role |
+| `ADMIN_ROLE` | No (default `admin`) | Role given to `ADMIN_USERNAME` when seeding |
+| `SUPERADMIN_USERNAME`, `SUPERADMIN_PASSWORD` | No | Seeds a second, superadmin account |
+| `GOOGLE_CLIENT_ID` | No | Enables "Sign in with Google" on the dashboard. Must be the same client ID the frontend uses, and the frontend's origin has to be listed as an authorised JavaScript origin in Google Cloud Console |
 
 **Scheduling / cron trigger**
 | Variable | Required | Purpose |
@@ -139,14 +179,25 @@ traffic through a tunnel — handy for debugging exactly what a webhook payload 
 |---|---|
 | `LOCAL_WORKER_SECRET` | Checked (via `X-Worker-Secret` header) on `POST /api/products/:id/report-check` — must match `WORKER_SECRET` in the worker's `.env` |
 
-## Sites that block cloud IPs — the local worker (free fallback)
+## Sites this server cannot reach
 
-Some sites block requests from cloud/datacenter IPs outright, no matter what the code does.
-`local-worker/` is a small standalone script (separate from this repo) meant to run on a normal PC
-— a residential IP looks like an ordinary customer to these sites. It scrapes just the sites listed
-in `PRICE_CHECK_SKIP_SITES` and reports results back to this server via
-`POST /api/products/:id/report-check`. The tradeoff: those sites only get checked while that
-script/PC is actually running.
+Two different problems, often confused, with different answers.
+
+**Blocked by IP.** JioMart, Myntra and Snapdeal refuse a foreign datacenter address. From an Indian
+IP they work directly; from a host outside India they need `SCRAPERAPI_KEY`, which was verified
+using ScraperAPI's ordinary Indian addresses rather than its premium residential tier.
+
+**Blocked by automation.** Meesho is different, and no proxy fixes it. Tested from one machine and
+one connection, changing only the browser: a plain HTTP request was refused, an automated browser
+was refused, and the same browser running normally with a window returned the real page. The
+detection is of automation, not of the address — which is why paid scraping services fail here too,
+being automated browsers themselves.
+
+That is what `local-worker/` is for: a small agent on a PC with a real browser, reading just the
+sites named in its `WORKER_SITES` and reporting back via `POST /api/products/:id/report-check`. List
+those same sites in `PRICE_CHECK_SKIP_SITES` here so this server does not also try and fail. A cloud
+host has no display and can only run the kind of browser Meesho rejects, so this part cannot be
+moved to the server — and while that PC is off, those listings are not checked.
 
 ## Deploying so it runs on a schedule
 
@@ -177,7 +228,14 @@ database rows, producing duplicate/contradictory Telegram alerts.
   can differ from a local test (bot detection can key off more than just IP reputation).
 - Public product pages rarely expose exact stock quantity, except where a platform's Seller/Admin
   API is configured (Flipkart Seller API).
-- **Known blocked sites**: Snapdeal, Nykaa, Tira, Meesho return a 403 (bot protection) from Render's
-  IP and aren't fixable in code alone — either the local-worker fallback, ScraperAPI's paid
-  premium-proxy plan, or a residential proxy is required. JioMart and Purplle are fixed via
-  `SCRAPERAPI_KEY` on the free tier.
+- **Site reachability** — see "Sites this server cannot reach". Flipkart, Tira and Purplle work
+  directly from anywhere; JioMart, Myntra and Snapdeal need an Indian IP or ScraperAPI; Meesho needs
+  the local worker regardless of address.
+- **Cross-marketplace links are set by hand** via `products.product_group`. Matching them from the
+  titles was tried and abandoned — it merged Vitamin C with Vitamin B12 and a 30-count with a
+  120-count, each of which would have reported a price gap that does not exist. Ungrouped listings
+  are left out of the comparison, which is the right failure: a missing row is honest, a wrong one
+  is not.
+- **Contact-form replies need a verified sending domain.** Until one is verified with the email
+  provider, replies only reach the provider account's own address. They are stored either way and
+  can be re-sent from the dashboard once it is.

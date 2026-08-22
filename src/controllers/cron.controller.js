@@ -1,5 +1,6 @@
 const { runPriceCheck } = require("../jobs/checkPrices");
 const { runAutoReply } = require("../jobs/autoReply");
+const { runWeeklyDigest } = require("../jobs/weeklyDigest");
 const asyncHandler = require("../utils/asyncHandler");
 const ApiError = require("../utils/ApiError");
 
@@ -27,4 +28,12 @@ const autoReply = asyncHandler(async (req, res) => {
   res.json({ ok: true });
 });
 
-module.exports = { priceCheck, autoReply };
+// Scheduled weekly rather than hourly — point the external scheduler at this one with a
+// Monday-morning cron expression.
+const weeklyDigest = asyncHandler(async (req, res) => {
+  checkCronSecret(req);
+  const message = await runWeeklyDigest();
+  res.json({ ok: true, message });
+});
+
+module.exports = { priceCheck, autoReply, weeklyDigest };

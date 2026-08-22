@@ -1,5 +1,5 @@
 const express = require("express");
-const { priceCheck, autoReply } = require("../controllers/cron.controller");
+const { priceCheck, autoReply, weeklyDigest } = require("../controllers/cron.controller");
 
 const router = express.Router();
 
@@ -7,5 +7,6 @@ const router = express.Router();
 // external scheduler, not the dashboard).
 router.post("/price-check", priceCheck);
 router.post("/auto-reply", autoReply);
+router.post("/weekly-digest", weeklyDigest);
 
 module.exports = router;

@@ -267,6 +267,16 @@ const getStockEvents = asyncHandler(async (req, res) => {
 });
 
 const getAllStockEvents = asyncHandler(async (req, res) => {
+  // An explicit window wins over the rolling one when both dates are given — a date range
+  // is a deliberate act, where `hours` is just the page's default.
+  const { from, to } = req.query;
+  if (from && to) {
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    if (isNaN(fromDate) || isNaN(toDate)) throw new ApiError(400, "from and to must be valid dates");
+    if (fromDate > toDate) throw new ApiError(400, "from must not be after to");
+    return res.json(await StockEvent.findBetween(fromDate, toDate));
+  }
   const hours = parseInt(req.query.hours, 10) || 24;
   res.json(await StockEvent.findRecent(500, hours));
 });

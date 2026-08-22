@@ -62,4 +62,29 @@ async function findAllOrdered() {
   return rows.map((row) => ({ product: row.product_id, status: row.status, checkedAt: row.checked_at }));
 }
 
-module.exports = { create, findByProduct, findRecent, findAllOrdered };
+// The same feed over an explicit window rather than "the last N hours".
+//
+// `to` is pushed to the end of its day: a date input hands over midnight, and someone
+// asking for logs up to the 22nd means including the 22nd, not stopping at the moment it
+// began.
+async function findBetween(fromDate, toDate, limit = 2000) {
+  const end = new Date(toDate);
+  end.setHours(23, 59, 59, 999);
+  const [rows] = await getPool().query(
+    `SELECT se.*, p.name AS product_name, p.site AS product_site, p.url AS product_url
+     FROM stock_events se
+     JOIN products p ON p.id = se.product_id
+     WHERE se.checked_at >= ? AND se.checked_at <= ?
+     ORDER BY se.checked_at DESC
+     LIMIT ?`,
+    [new Date(fromDate), end, limit]
+  );
+  return rows.map((row) => ({
+    ...toApiShape(row),
+    productName: row.product_name,
+    productSite: row.product_site,
+    productUrl: row.product_url,
+  }));
+}
+
+module.exports = { create, findByProduct, findRecent, findAllOrdered, findBetween };

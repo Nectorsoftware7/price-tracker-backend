@@ -126,6 +126,23 @@ function conditionalFormatRequests(sheetId, columnCount, colorColumns) {
   return requests;
 }
 
+// A filter on the header row, which is what puts a dropdown on every column — Type and
+// Site being the ones worth narrowing on the changes tab.
+//
+// Set once and it stays: new rows are inserted at row 2, *inside* the filter's range, and
+// Sheets grows the range to match. Appending at the bottom instead would leave every new
+// row outside the filter until someone re-applied it.
+//
+// endRowIndex is left off deliberately so the filter claims the whole column rather than
+// stopping at today's last row.
+function basicFilterRequest(sheetId, columnCount) {
+  return {
+    setBasicFilter: {
+      filter: { range: { sheetId, startRowIndex: 0, startColumnIndex: 0, endColumnIndex: columnCount } },
+    },
+  };
+}
+
 async function main() {
   if (!process.env.GOOGLE_SHEET_ID) throw new Error("GOOGLE_SHEET_ID is not set");
 
@@ -171,6 +188,7 @@ async function main() {
     requests.push(bandingRequest(sheetId, tab.columns));
     requests.push(...conditionalFormatRequests(sheetId, tab.columns, tab.colorColumns));
     if (tab.urlColumn != null) requests.push(urlWrapRequest(sheetId, tab.urlColumn));
+    requests.push(basicFilterRequest(sheetId, tab.columns));
   }
 
   await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests } });

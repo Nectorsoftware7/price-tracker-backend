@@ -87,4 +87,16 @@ async function findBetween(fromDate, toDate, limit = 2000) {
   }));
 }
 
-module.exports = { create, findByProduct, findRecent, findAllOrdered, findBetween };
+// How many times each product's stock status flipped in a window. Straightforward here,
+// unlike prices, because this table only ever records changes in the first place.
+async function changeCountsSince(fromDate) {
+  const [rows] = await getPool().query(
+    "SELECT product_id, COUNT(*) AS changes FROM stock_events WHERE checked_at >= ? GROUP BY product_id",
+    [fromDate]
+  );
+  const byProduct = {};
+  for (const row of rows) byProduct[row.product_id] = Number(row.changes);
+  return byProduct;
+}
+
+module.exports = { create, findByProduct, findRecent, findAllOrdered, findBetween, changeCountsSince };

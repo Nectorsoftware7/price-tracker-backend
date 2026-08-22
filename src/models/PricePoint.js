@@ -96,4 +96,26 @@ async function firstAndLastSince(fromDate) {
   return byProduct;
 }
 
-module.exports = { create, findSince, findBetween, findLatest, statsForAllProducts, findAllSince, firstAndLastSince };
+// How many times each product's price actually *moved* in a window.
+//
+// Not the number of readings: a product checked hourly has ~336 readings a fortnight and
+// may never have changed once. A move is a reading that differs from the one before it,
+// so each row is compared with its predecessor and only the differences are counted.
+async function changeCountsSince(fromDate) {
+  const [rows] = await getPool().query(
+    `SELECT product_id, COUNT(*) AS changes FROM (
+       SELECT product_id, price,
+              LAG(price) OVER (PARTITION BY product_id ORDER BY checked_at ASC, id ASC) AS previous
+       FROM price_points
+       WHERE checked_at >= ?
+     ) stepped
+     WHERE previous IS NOT NULL AND price <> previous
+     GROUP BY product_id`,
+    [fromDate]
+  );
+  const byProduct = {};
+  for (const row of rows) byProduct[row.product_id] = Number(row.changes);
+  return byProduct;
+}
+
+module.exports = { create, findSince, findBetween, findLatest, statsForAllProducts, findAllSince, firstAndLastSince, changeCountsSince };

@@ -259,7 +259,33 @@ const getDashboard = asyncHandler(async (req, res) => {
 
   const ungrouped = products.filter((p) => p.active && !p.productGroup).length;
 
-  res.json({ days, priceMovers, stockByDay, marketplacePrices, ungrouped });
+  // Who churns most — how often a listing changed, rather than by how much. A product
+  // that flips between two prices all fortnight and ends where it began shows nothing in
+  // the movers chart above, yet is the one worth asking about.
+  const [priceChangeCounts, stockChangeCounts] = await Promise.all([
+    PricePoint.changeCountsSince(from),
+    StockEvent.changeCountsSince(from),
+  ]);
+
+  const rank = (counts) =>
+    Object.entries(counts)
+      .map(([id, changes]) => {
+        const product = byId.get(Number(id));
+        return product && { id: product._id, name: product.name, site: product.site, url: product.url, changes };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.changes - a.changes)
+      .slice(0, 10);
+
+  res.json({
+    days,
+    priceMovers,
+    stockByDay,
+    marketplacePrices,
+    ungrouped,
+    priceChurn: rank(priceChangeCounts),
+    stockChurn: rank(stockChangeCounts),
+  });
 });
 
 const getStockEvents = asyncHandler(async (req, res) => {
